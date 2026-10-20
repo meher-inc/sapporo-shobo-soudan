@@ -1,0 +1,67 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // 差し替え: src/config/service.ts の id と同じ値
+  "name": "sapporo-shobo-soudan",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // Tokyo fire consultation measured at most 184 ms CPU per streamed answer.
+  "limits": { "cpu_ms": 500 },
+  // sapporo.todokede.jp（Cloudflare for SaaS のカスタムホスト名。SaaS ゾーン meher-edge.com は MeHer の共通基盤）だけをこの Worker に向ける。
+  // ゾーン全体（*/*）は他サービス・他都市でも使うため割り当てない。手順は京都版の docs/domain-setup.md
+  "routes": [{ "pattern": "sapporo.todokede.jp/*", "zone_name": "meher-edge.com" }],
+  // ルートを設定しても workers.dev は残す（正規ドメインへの 301 転送のため）
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/", "/index.html", "/api/*", "/auth/*", "/legal/*", "/robots.txt", "/sitemap.xml"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      // 差し替え: `npx wrangler d1 create <id>` の出力（database_name と database_id）
+      "database_name": "sapporo-shobo-soudan",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "ai": { "binding": "AI", "remote": true },
+  // Google と Stripe の鍵はアカウント共通の Secrets Store（MeHer の全サービスで共通）から読む。src/worker/secrets.ts
+  "secrets_store_secrets": [
+    { "binding": "SHARED_GOOGLE_CLIENT_ID", "store_id": "b0f7d791ae1c4110ada373a543bb668c", "secret_name": "GOOGLE_CLIENT_ID" },
+    { "binding": "SHARED_GOOGLE_CLIENT_SECRET", "store_id": "b0f7d791ae1c4110ada373a543bb668c", "secret_name": "GOOGLE_CLIENT_SECRET" },
+    { "binding": "SHARED_STRIPE_SECRET_KEY", "store_id": "b0f7d791ae1c4110ada373a543bb668c", "secret_name": "STRIPE_SECRET_KEY" }
+  ],
+  "ratelimits": [
+    {
+      "name": "CHAT_LIMITER",
+      // 差し替え: アカウント内でサービスごとに別の整数（既存: 4101 = 東京の消防相談）
+      "namespace_id": "7292",
+      "simple": { "limit": 20, "period": 60 }
+    }
+  ],
+  "vars": {
+    // Workers AI のモデル。選定理由は README の「技術選定の理由」
+    "AI_MODEL": "@cf/google/gemma-4-26b-a4b-it",
+    // 差し替え: 独自ドメインを接続したら https://<host> にする
+    "CANONICAL_ORIGIN": "https://sapporo.todokede.jp",
+    "STRIPE_API_BASE": "https://api.stripe.com",
+    // 設置義務・届出の要否を条文どおりのルールで判定して回答に渡す（src/rules）。初回公開前なので有効
+    "RULES_ENABLED": "1",
+    // 1人あたり日本時間の1日に送れる相談の数（相談は無料のため、AI の利用料の上限として）。src/worker/caps.ts
+    "USER_DAILY_MESSAGE_LIMIT": "20"
+  },
+  // Local tests without Cloudflare credentials: same bindings minus Workers AI (answers come from AI_MOCK).
+  // Bindings are not inherited by environments, so D1 and the rate limiter are repeated here.
+  "env": {
+    "mock": {
+      "routes": [],
+      "d1_databases": [{ "binding": "DB", "database_name": "sapporo-shobo-soudan", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
+      "ratelimits": [{ "name": "CHAT_LIMITER", "namespace_id": "7292", "simple": { "limit": 20, "period": 60 } }],
+      "vars": { "AI_MODEL": "mock", "CANONICAL_ORIGIN": "http://localhost:8787", "STRIPE_API_BASE": "https://api.stripe.com", "RULES_ENABLED": "1", "USER_DAILY_MESSAGE_LIMIT": "20" }
+    }
+  }
+}

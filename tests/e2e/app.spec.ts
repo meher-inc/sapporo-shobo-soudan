@@ -1,0 +1,438 @@
+import { expect, test, type Page } from "@playwright/test";
+import { SERVICE } from "../../src/config/service";
+
+const uniqueEmail = (tag: string) => `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.com`;
+
+async function login(page: Page, email = uniqueEmail("u")) {
+  await page.goto(`/auth/test-login?email=${encodeURIComponent(email)}&next=/`);
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+}
+
+async function ask(page: Page, text: string) {
+  const input = page.getByTestId("composer-input");
+  await input.fill(text);
+  await page.getByTestId("send-button").click();
+  const reply = page.getByTestId("msg-assistant").last();
+  // The copy action appears once streaming has finished.
+  await expect(reply.getByRole("button", { name: "コピー" })).toBeVisible({ timeout: 60_000 });
+  return reply;
+}
+
+const testIp = () => `198.51.100.${Math.floor(Math.random() * 250)}-${Date.now()}`;
+
+test.beforeEach(async ({ page, context }) => {
+  // Each test acts as its own client so the per-IP anonymous trial limit does not interfere.
+  await context.setExtraHTTPHeaders({ "x-test-ip": testIp() });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // 429 is a handled response (per-IP anonymous limit, rate limit) that the browser still logs.
+  // Linux builds of WebKit (CI) warn about the viewport's interactive-widget key, which they do not support.
+  const expected = /favicon|status of 429|Viewport argument key "interactive-widget"/;
+  page.on("console", (m) => m.type() === "error" && !expected.test(m.text()) && errors.push(m.text()));
+  (page as Page & { __errors: string[] }).__errors = errors;
+});
+
+test.afterEach(async ({ page }) => {
+  expect((page as Page & { __errors: string[] }).__errors, "no console errors").toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// 開いた瞬間に相談できる・全画面スケルトン・キャッチコピーなし
+// ---------------------------------------------------------------------------
+
+test.describe(() => {
+  // A Service Worker serving /assets/ would bypass page.route's delay, and the skeleton could vanish before it is measured.
+  test.use({ serviceWorkers: "block" });
+
+  test("full-screen skeleton is shown first, then the composer is ready immediately", async ({ page }) => {
+    await page.route("**/assets/*.js", async (route) => {
+      await new Promise((r) => setTimeout(r, 800));
+      await route.continue();
+    });
+    // The skeleton disappears as soon as the app loads, so record its size when the HTML has been parsed (before scripts run).
+    await page.addInitScript(() => {
+      document.addEventListener("readystatechange", () => {
+        if (document.readyState !== "interactive") return;
+        const el = document.querySelector('[data-testid="skeleton"]');
+        const r = el?.getBoundingClientRect();
+        (window as unknown as { __skeleton?: { width: number; height: number } | null }).__skeleton = r ? { width: r.width, height: r.height } : null;
+      });
+    });
+    const start = Date.now();
+    await page.goto("/");
+    const box = await page.evaluate(() => (window as unknown as { __skeleton?: { width: number; height: number } | null }).__skeleton);
+    const viewport = page.viewportSize()!;
+    expect(box, "skeleton is in the first HTML").toBeTruthy();
+    expect(box!.width).toBeGreaterThanOrEqual(viewport.width - 1);
+    expect(box!.height).toBeGreaterThanOrEqual(viewport.height - 1);
+    await expect(page.getByTestId("composer-input")).toBeVisible();
+    await expect(page.getByTestId("skeleton")).toHaveCount(0);
+    expect(Date.now() - start).toBeLessThan(5000);
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    await expect(page.getByRole("button", { name: SERVICE.suggestions[0] })).toBeVisible();
+  });
+});
+
+test("no catch copy: the first screen shows only the brand, suggestions and the notice", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  await expect(page.locator("h1, h2")).toHaveCount(0);
+  const brand = [SERVICE.shortName, SERVICE.area, `${SERVICE.shortName}${SERVICE.area}`, `${SERVICE.shortName} ${SERVICE.area}`];
+  const allowed = new Set<string>([...brand, SERVICE.notice, ...SERVICE.suggestions]);
+  const lines = (await page.locator(".app").innerText())
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  expect(lines.filter((l) => !allowed.has(l)), "only allowed text on the first screen").toEqual([]);
+  await expect(page.getByTestId("composer-input")).toHaveAttribute("placeholder", SERVICE.placeholder);
+});
+
+test("layout fits the viewport without horizontal scroll", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  const brand = await page.getByTestId("brand").boundingBox();
+  expect(brand!.height, "header title stays on one line").toBeLessThan(30);
+});
+
+// ---------------------------------------------------------------------------
+// デザイン基準（docs/DESIGN.md）: 白ベースの Liquid Glass とアニメーション
+// ---------------------------------------------------------------------------
+
+const hexToRgb = (hex: string) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+};
+
+test("design: white base, glass surfaces and the service accent colour", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  const style = await page.evaluate(() => {
+    const blur = (sel: string) => {
+      const cs = getComputedStyle(document.querySelector(sel)!) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
+      return cs.backdropFilter || cs.webkitBackdropFilter || "";
+    };
+    return {
+      body: getComputedStyle(document.body).backgroundColor,
+      header: blur(".header"),
+      composer: blur(".composer"),
+      chip: blur(".chip"),
+      send: getComputedStyle(document.querySelector(".send")!).backgroundImage,
+    };
+  });
+  expect(style.body).toBe("rgb(255, 255, 255)");
+  for (const k of ["header", "composer", "chip"] as const) expect(style[k], `${k} is glass`).toMatch(/blur\(\d+px\)/);
+  expect(style.send).toContain(hexToRgb(SERVICE.theme.accent));
+});
+
+test("design: messages, chips and sheets animate in @local", async ({ page }) => {
+  await page.goto("/");
+  const anim = (sel: string) => page.locator(sel).first().evaluate((el) => getComputedStyle(el).animationName);
+  expect(await anim(".chip")).toBe("chipIn");
+  expect(await anim(".ambient i")).toBe("drift");
+  expect(await anim(".app")).toBe("appIn");
+  await ask(page, "アニメーションの確認");
+  expect(await anim(".msg.user")).toBe("msgIn");
+  await page.getByTestId("menu-button").click();
+  expect(await anim(".sheet")).toBe("sheetIn");
+});
+
+test("animations respect prefers-reduced-motion", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ reducedMotion: "reduce" });
+  const page = await context.newPage();
+  await page.goto(`${baseURL}/`);
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  const name = await page.locator(".ambient i").first().evaluate((el) => getComputedStyle(el).animationName);
+  expect(name).toBe("none");
+  await context.close();
+});
+
+// ---------------------------------------------------------------------------
+// 相談（ログインなしで即利用・履歴・ストリーミング）
+// ---------------------------------------------------------------------------
+
+test("anonymous user can consult immediately without logging in @local", async ({ page }) => {
+  await page.goto("/");
+  const question = "はじめての相談です。何から確認すればいいですか？";
+  await page.getByTestId("composer-input").fill(question);
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("login-sheet")).toHaveCount(0);
+  await expect(page.getByTestId("msg-user").first()).toHaveText(question);
+  const reply = page.getByTestId("msg-assistant").first();
+  await expect(reply.getByRole("button", { name: "コピー" })).toBeVisible({ timeout: 60_000 });
+  expect(((await reply.textContent()) ?? "").length).toBeGreaterThan(20);
+  await expect(page.getByTestId("trial-badge")).toHaveCount(0);
+
+  const me = await (await page.request.get("/api/me")).json();
+  expect(me.user).toBeNull();
+  expect(me.hasSession).toBe(true);
+  expect(me.access).toBe("free");
+  expect(me).not.toHaveProperty("trialEndsAt");
+
+  // History survives a reload without an account.
+  await page.reload();
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("history-item")).toHaveCount(1);
+  await expect(page.getByTestId("menu-login")).toBeVisible();
+});
+
+test("a suggestion chip sends right away and history reopens the conversation @local", async ({ page }) => {
+  await login(page);
+  await page.getByRole("button", { name: SERVICE.suggestions[1] }).click();
+  const reply = page.getByTestId("msg-assistant").first();
+  await expect(reply.locator(".typing, .caret").first()).toBeVisible();
+  await expect(reply.getByRole("button", { name: "コピー" })).toBeVisible({ timeout: 60_000 });
+
+  await page.getByTestId("menu-button").click();
+  const items = page.getByTestId("history-item");
+  await expect(items).toHaveCount(1);
+  await expect(items.first()).toContainText(SERVICE.suggestions[1]);
+
+  await page.getByTestId("new-conversation").click();
+  await expect(page.getByTestId("msg-user")).toHaveCount(0);
+
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("history-item").first().click();
+  await expect(page.getByTestId("msg-user")).toHaveCount(1);
+  await expect(page.getByTestId("msg-assistant")).toHaveCount(1);
+});
+
+test("follow-up questions continue the same conversation @local", async ({ page }) => {
+  await login(page);
+  await ask(page, "最初の質問です");
+  await ask(page, "その場合はどうなりますか？");
+  await expect(page.getByTestId("msg-user")).toHaveCount(2);
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("history-item")).toHaveCount(1);
+});
+
+test("streams a real Workers AI answer @local @real-ai", async ({ page, context }) => {
+  await context.setExtraHTTPHeaders({ "x-test-ip": testIp(), "x-test-real-ai": "1" });
+  await page.goto("/");
+  const reply = await ask(page, "相談の進め方を短く教えてください");
+  const text = (await reply.textContent()) ?? "";
+  expect(text.length).toBeGreaterThan(40);
+  expect(text).not.toContain("回答を生成できませんでした");
+});
+
+test("a stalled AI stream ends with a retry note instead of hanging @local", async ({ page }) => {
+  test.skip(test.info().project.name !== "desktop-chrome", "server behaviour; one browser is enough");
+  await page.goto("/");
+  await page.getByTestId("composer-input").fill("__stall__");
+  await page.getByTestId("send-button").click();
+  const reply = page.getByTestId("msg-assistant").first();
+  await expect(reply).toContainText("途中までの回答");
+  await expect(reply.getByRole("button", { name: "コピー" })).toBeVisible({ timeout: 45_000 });
+  await expect(reply).toContainText("もう一度お試しください");
+  await expect(page.getByTestId("send-button")).toHaveAttribute("aria-label", "送信");
+});
+
+test("the daily message limit stops sending with a notice @local", async ({ page }) => {
+  await page.goto("/");
+  await ask(page, "消火器は必要ですか");
+  expect((await page.request.post("/api/test/fill-quota")).ok()).toBeTruthy();
+  const res = await page.request.post("/api/chat", { data: { message: "もう1件" } });
+  expect(res.status()).toBe(429);
+  expect((await res.json()).error).toBe("user_limit");
+  await page.getByTestId("composer-input").fill("上限を超えた質問");
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("toast")).toContainText("本日の相談回数の上限");
+  await expect(page.getByTestId("composer-input")).toHaveValue("上限を超えた質問");
+  await expect(page.getByTestId("msg-user")).toHaveCount(1);
+});
+
+test("conversation can be deleted from history @local", async ({ page }) => {
+  await login(page);
+  await ask(page, "削除する相談");
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("history-item")).toHaveCount(1);
+  await page.getByRole("button", { name: "削除", exact: true }).click();
+  await expect(page.getByTestId("history-item")).toHaveCount(0);
+});
+
+test("sheet closes with Escape", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("menu-sheet")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("menu-sheet")).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// Google 認証のみ・相談は無料・以前の登録者の解約
+// ---------------------------------------------------------------------------
+
+test("signing in with Google keeps anonymous history @local", async ({ page }) => {
+  await page.goto("/");
+  await ask(page, "引き継ぎの確認");
+
+  await page.goto(`/auth/test-login?email=${uniqueEmail("adopt")}&next=/`);
+  const after = await (await page.request.get("/api/me")).json();
+  expect(after.user).not.toBeNull();
+  expect(after.access).toBe("free");
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("history-item")).toHaveCount(1);
+  await expect(page.getByTestId("history-item").first()).toContainText("引き継ぎ");
+});
+
+test("the menu offers Google as the only way to sign in", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("menu-button").click();
+  const sheet = page.getByTestId("menu-sheet");
+  await expect(sheet.getByTestId("menu-login")).toHaveText(/Googleでログイン/);
+  await expect(sheet.locator('input[type="password"], input[type="email"]')).toHaveCount(0);
+});
+
+test("consulting stays free after the former 24-hour free period, without a paywall @local", async ({ page }) => {
+  await page.goto("/");
+  await ask(page, "無料期間の確認");
+  expect((await page.request.post("/api/test/expire-trial")).ok()).toBeTruthy();
+  await page.reload();
+  const me = await (await page.request.get("/api/me")).json();
+  expect(me.access).toBe("free");
+  await expect(page.getByTestId("trial-badge")).toHaveCount(0);
+
+  await ask(page, "25時間後の質問です");
+  await expect(page.getByTestId("paywall-sheet")).toHaveCount(0);
+  await expect(page.getByTestId("msg-assistant")).toHaveCount(1);
+});
+
+test("a signed-in user can keep consulting after the former free period @local", async ({ page }) => {
+  await login(page);
+  await ask(page, "1回目の質問");
+  expect((await page.request.post("/api/test/expire-trial")).ok()).toBeTruthy();
+  const res = await page.request.post("/api/chat", { data: { message: "期限後のAPI確認" } });
+  expect(res.status()).toBe(200);
+  await res.body();
+
+  await page.reload();
+  await ask(page, "画面からの2回目の質問");
+  await expect(page.getByTestId("paywall-sheet")).toHaveCount(0);
+  await page.getByTestId("menu-button").click();
+  const menu = page.getByTestId("menu-sheet");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByTestId("plan-row")).toHaveCount(0);
+  await expect(menu.getByTestId("billing-portal")).toHaveCount(0);
+  await expect(menu).not.toContainText("月額");
+});
+
+test("new subscriptions are refused; checkout returns plan_discontinued @local", async ({ page, request }) => {
+  const anon = await request.post("/api/billing/checkout");
+  expect(anon.status()).toBe(410);
+  expect(await anon.json()).toEqual({ error: "plan_discontinued" });
+  await login(page);
+  const res = await page.request.post("/api/billing/checkout");
+  expect(res.status()).toBe(410);
+  expect(await res.json()).toEqual({ error: "plan_discontinued" });
+});
+
+test("an existing subscriber can still open the Customer Portal to cancel @local", async ({ page }) => {
+  await login(page);
+  expect((await page.request.post("/api/test/subscribe")).ok()).toBeTruthy();
+  await page.reload();
+  const me = await (await page.request.get("/api/me")).json();
+  expect(me.access).toBe("paid");
+  expect(me.billingPortal).toBe(true);
+  await page.getByTestId("menu-button").click();
+  const portal = page.getByTestId("menu-sheet").getByTestId("billing-portal");
+  await expect(portal).toHaveText("お支払い・解約の管理");
+  const res = await page.request.post("/api/billing/portal");
+  expect(res.ok()).toBeTruthy();
+  expect((await res.json()).url).toBe("http://localhost:12111/portal");
+});
+
+test("anonymous trials are limited per IP, then login is offered @local", async ({ page, playwright, baseURL }) => {
+  const ip = testIp();
+  for (let i = 0; i < SERVICE.anonTrialsPerIp; i++) {
+    const client = await playwright.request.newContext({ baseURL, extraHTTPHeaders: { "x-test-ip": ip } });
+    const res = await client.post("/api/chat", { data: { message: "上限の確認" } });
+    expect(res.status()).toBe(200);
+    await res.body();
+    await client.dispose();
+  }
+  await page.context().setExtraHTTPHeaders({ "x-test-ip": ip });
+  await page.goto("/");
+  await page.getByTestId("composer-input").fill("上限を超えた新しい端末");
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("login-sheet")).toBeVisible();
+  await expect(page.getByTestId("composer-input")).toHaveValue("上限を超えた新しい端末");
+});
+
+test("Google login redirects to Google with PKCE and state; checkout is closed @local", async ({ request }) => {
+  const res = await request.get("/auth/google", { maxRedirects: 0 });
+  expect(res.status()).toBe(302);
+  const location = new URL(res.headers()["location"]);
+  expect(location.origin + location.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+  expect(location.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(location.searchParams.get("state")).toBeTruthy();
+  expect(location.searchParams.get("redirect_uri")).toBe("http://localhost:8787/auth/callback");
+  expect(res.headers()["set-cookie"]).toMatch(/oauth=.*HttpOnly/i);
+  const badCallback = await request.get("/auth/callback?code=x&state=wrong", { maxRedirects: 0 });
+  expect(badCallback.headers()["location"]).toBe("/?login=failed");
+  expect((await request.post("/api/billing/checkout")).status()).toBe(410);
+});
+
+test("logout returns to the signed-out state @local", async ({ page }) => {
+  await login(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("logout").click();
+  // Wait for the sign-out request to finish before checking.
+  await expect.poll(async () => (await (await page.request.get("/api/me")).json()).user).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// セキュリティ・法定表示・検索
+// ---------------------------------------------------------------------------
+
+test("stripe webhook rejects unsigned events", async ({ request }) => {
+  const res = await request.post("/api/stripe/webhook", {
+    data: { id: "evt_x", type: "checkout.session.completed", data: { object: {} } },
+    headers: { "stripe-signature": "t=1,v1=deadbeef" },
+  });
+  expect(res.status()).toBe(400);
+});
+
+test("cross-origin API writes are rejected", async ({ request }) => {
+  const res = await request.post("/api/chat", { data: { message: "x" }, headers: { origin: "https://evil.example" } });
+  expect(res.status()).toBe(403);
+});
+
+for (const [path, heading] of [
+  ["/legal/terms", "利用規約"],
+  ["/legal/privacy", "プライバシーポリシー"],
+  ["/legal/tokushoho", "特定商取引法に基づく表記"],
+] as const) {
+  test(`legal page ${path} renders from the service config`, async ({ page }) => {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(heading);
+    await expect(page.getByRole("link", { name: "相談に戻る" })).toBeVisible();
+    await expect(page.locator(".legal")).toContainText(SERVICE.seller.name);
+    if (path === "/legal/tokushoho") {
+      await expect(page.locator(".legal")).toContainText(SERVICE.seller.address);
+      await expect(page.locator(".legal")).toContainText("相談は無料です");
+      await expect(page.locator(".legal")).not.toContainText("980円");
+    }
+    if (path === "/legal/terms") {
+      await expect(page.locator(".legal")).toContainText(SERVICE.name);
+      await expect(page.locator(".legal")).toContainText("相談は無料です");
+      await expect(page.locator(".legal")).not.toContainText("無料期間");
+    }
+  });
+}
+
+test("home page carries search metadata without visible copy", async ({ page, request }) => {
+  await page.goto("/");
+  await expect(page).toHaveTitle(SERVICE.title);
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(1);
+  const types = await page
+    .locator('script[type="application/ld+json"]')
+    .evaluateAll((els) => els.map((e) => (JSON.parse(e.textContent ?? "{}") as { "@type": string })["@type"]));
+  expect(types).toEqual(expect.arrayContaining(["WebSite", "WebApplication"]));
+  const offer = await page
+    .locator('script[type="application/ld+json"]')
+    .evaluateAll((els) => els.map((e) => JSON.parse(e.textContent ?? "{}") as { offers?: { price: number; priceCurrency: string } }).find((j) => j.offers)?.offers);
+  expect(offer).toEqual(expect.objectContaining({ price: 0, priceCurrency: "JPY" }));
+  expect(await (await request.get("/robots.txt")).text()).toContain("Sitemap:");
+  expect(await (await request.get("/sitemap.xml")).text()).toContain("<urlset");
+});

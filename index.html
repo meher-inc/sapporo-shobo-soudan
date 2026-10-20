@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="%DESCRIPTION%" />
+    <title>%TITLE%</title>
+    <meta property="og:title" content="%TITLE%" />
+    <meta property="og:description" content="%DESCRIPTION%" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="%SHORT_NAME%" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!--THEME-->
+    <style>
+      html,body{margin:0;background:#fff;height:100%}
+      #boot{position:fixed;inset:0;z-index:50;background:#fff;display:flex;flex-direction:column;transition:opacity .45s ease,filter .45s ease}
+      #boot.done{opacity:0;filter:blur(8px);pointer-events:none}
+      .sk{background:linear-gradient(100deg,#eef0f3 30%,#f8f9fb 50%,#eef0f3 70%);background-size:300% 100%;animation:skm 1.3s ease-in-out infinite;border-radius:14px}
+      @keyframes skm{0%{background-position:100% 0}100%{background-position:0 0}}
+      @media (prefers-reduced-motion:reduce){.sk{animation:none}}
+      .sk-head{margin:max(12px,env(safe-area-inset-top)) 16px 0;height:52px;border-radius:26px;display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+      .sk-body{flex:1;padding:28px 16px;display:flex;flex-direction:column;gap:14px;max-width:720px;width:100%;margin:0 auto;box-sizing:border-box}
+      .sk-foot{margin:0 auto max(12px,env(safe-area-inset-bottom));width:calc(100% - 32px);max-width:720px;height:56px;border-radius:28px}
+    </style>
+    <!--ME-->
+  </head>
+  <body>
+    <div id="boot" aria-busy="true" aria-label="読み込み中" data-testid="skeleton">
+      <div class="sk-head" style="background:#f6f7f9">
+        <div class="sk" style="width:36px;height:36px;border-radius:50%"></div>
+        <div class="sk" style="width:96px;height:16px"></div>
+        <div class="sk" style="width:36px;height:36px;border-radius:50%"></div>
+      </div>
+      <div class="sk-body">
+        <div class="sk" style="width:62%;height:56px;align-self:flex-end;border-radius:20px 20px 6px 20px"></div>
+        <div class="sk" style="width:84%;height:120px;border-radius:20px 20px 20px 6px"></div>
+        <div class="sk" style="width:48%;height:44px;align-self:flex-end;border-radius:20px 20px 6px 20px"></div>
+        <div class="sk" style="width:76%;height:92px;border-radius:20px 20px 20px 6px"></div>
+      </div>
+      <div class="sk sk-foot"></div>
+      <button id="boot-retry" hidden onclick="location.reload()" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:12px 20px;border-radius:8px;border:1px solid rgba(0,0,0,.08);background:#fff;font:inherit;font-size:15px;color:#15171c">読み込みに時間がかかっています。再読み込みする</button>
+    </div>
+    <script>setTimeout(function(){var b=document.getElementById("boot-retry");if(b&&!document.querySelector(".app,.legal"))b.hidden=false},10000)</script>
+    <div id="app"></div>
+    <script type="module" src="/src/client/main.tsx"></script>
+  </body>
+</html>
