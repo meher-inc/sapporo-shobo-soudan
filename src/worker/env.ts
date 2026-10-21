@@ -19,6 +19,12 @@ export interface Env {
   AI_MOCK?: string;
   /** Messages one user may send per JST day. Defaults to 20. */
   USER_DAILY_MESSAGE_LIMIT?: string;
+  /** 引き継ぎ一覧（/api/admin/escalations）を見られるアカウント（カンマ区切り） */
+  ADMIN_EMAILS?: string;
+  /** 専門家への依頼の通知メール。どれかがなければ D1 に記録するだけ */
+  EMAIL?: SendEmail;
+  NOTIFY_FROM?: string;
+  NOTIFY_TO?: string;
 }
 
 export interface User {

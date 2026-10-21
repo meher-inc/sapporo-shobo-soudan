@@ -277,3 +277,22 @@ textarea { font: inherit; }
   .ambient i { animation: none; }
 }
 
+
+
+/* 専門家（行政書士・消防設備士）への引き継ぎと、弁護士への案内 */
+.handoff { margin-top: 8px; border-radius: 18px; padding: 12px 14px; font-size: 13px; animation: fadeIn 0.4s ease 0.2s both; }
+.handoff strong { display: block; font-size: 14px; color: var(--ink); margin-bottom: 4px; }
+.handoff p { margin: 0 0 10px; color: var(--ink-2); line-height: 1.6; }
+.handoff.lane-bengoshi p { margin-bottom: 0; }
+.handoff .btn { width: auto; padding: 10px 16px; font-size: 14px; }
+.handoff-done { display: inline-block; padding: 6px 12px; border-radius: 999px; font-weight: 600; color: var(--ink-2); background: rgba(20, 24, 33, 0.05); }
+.handoff p.handoff-diy { margin: 10px 0 0; font-size: 12.5px; }
+.handoff-diy a { color: var(--accent); font-weight: 600; text-decoration: underline; }
+.handoff-form label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.handoff-form input:not([type="checkbox"]), .handoff-form textarea {
+  font: inherit; font-size: 16px; font-weight: 400; color: var(--ink); padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, 0.8); outline: 0; resize: vertical;
+}
+.handoff-form input:focus, .handoff-form textarea:focus { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.handoff-form .consent { flex-direction: row; align-items: flex-start; gap: 10px; font-weight: 400; line-height: 1.6; }
+.handoff-form .consent input { margin-top: 4px; width: 18px; height: 18px; flex: none; accent-color: var(--accent); }

@@ -29,6 +29,8 @@
     }
   ],
   "ai": { "binding": "AI", "remote": true },
+  // 専門家への依頼（エスカレーション）の通知メール（Cloudflare Email Sending。送信元ドメイン meher-edge.com は登録済み）
+  "send_email": [{ "name": "EMAIL" }],
   // Google と Stripe の鍵はアカウント共通の Secrets Store（MeHer の全サービスで共通）から読む。src/worker/secrets.ts
   "secrets_store_secrets": [
     { "binding": "SHARED_GOOGLE_CLIENT_ID", "store_id": "b0f7d791ae1c4110ada373a543bb668c", "secret_name": "GOOGLE_CLIENT_ID" },
@@ -52,7 +54,12 @@
     // 設置義務・届出の要否を条文どおりのルールで判定して回答に渡す（src/rules）。初回公開前なので有効
     "RULES_ENABLED": "1",
     // 1人あたり日本時間の1日に送れる相談の数（相談は無料のため、AI の利用料の上限として）。src/worker/caps.ts
-    "USER_DAILY_MESSAGE_LIMIT": "20"
+    "USER_DAILY_MESSAGE_LIMIT": "20",
+    // 引き継ぎ一覧（/api/admin/escalations）を見られるアカウント
+    "ADMIN_EMAILS": "s.maru0714@gmail.com",
+    // 専門家への依頼の通知。NOTIFY_TO はカンマ区切りで複数可
+    "NOTIFY_FROM": "notify@meher-edge.com",
+    "NOTIFY_TO": "info@todokede.jp"
   },
   // Local tests without Cloudflare credentials: same bindings minus Workers AI (answers come from AI_MOCK).
   // Bindings are not inherited by environments, so D1 and the rate limiter are repeated here.
@@ -61,7 +68,7 @@
       "routes": [],
       "d1_databases": [{ "binding": "DB", "database_name": "sapporo-shobo-soudan", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
       "ratelimits": [{ "name": "CHAT_LIMITER", "namespace_id": "7292", "simple": { "limit": 20, "period": 60 } }],
-      "vars": { "AI_MODEL": "mock", "CANONICAL_ORIGIN": "http://localhost:8787", "STRIPE_API_BASE": "https://api.stripe.com", "RULES_ENABLED": "1", "USER_DAILY_MESSAGE_LIMIT": "20" }
+      "vars": { "AI_MODEL": "mock", "CANONICAL_ORIGIN": "http://localhost:8787", "STRIPE_API_BASE": "https://api.stripe.com", "RULES_ENABLED": "1", "USER_DAILY_MESSAGE_LIMIT": "20", "ADMIN_EMAILS": "s.maru0714@gmail.com" }
     }
   }
 }

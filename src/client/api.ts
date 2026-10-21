@@ -10,10 +10,20 @@ export interface Me {
   loginAvailable: boolean;
 }
 
+export type EscalationLane = "gyosei" | "setsubi" | "bengoshi";
+
+/** 回答の下に出す引き継ぎカード（行政書士・点検工事の手配・弁護士の案内） */
+export interface EscalationRef {
+  id: string;
+  lane: EscalationLane;
+  status: "detected" | "requested";
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  escalation?: EscalationRef;
 }
 
 export interface ConversationSummary {
@@ -48,6 +58,7 @@ export async function streamChat(
   conversationId: string | null,
   onChunk: (text: string) => void,
   signal: AbortSignal,
+  onEscalation?: (escalation: EscalationRef) => void,
 ): Promise<string> {
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -60,6 +71,8 @@ export async function streamChat(
     throw new ApiError(res.status, body.error ?? "error");
   }
   const id = res.headers.get("x-conversation-id") ?? "";
+  const escalation = res.headers.get("x-escalation");
+  if (escalation) onEscalation?.(JSON.parse(decodeURIComponent(escalation)) as EscalationRef);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   for (;;) {
@@ -79,8 +92,36 @@ export async function listConversations(): Promise<ConversationSummary[]> {
 export async function loadConversation(id: string): Promise<ChatMessage[]> {
   const res = await fetch(`/api/conversations/${id}`);
   if (!res.ok) throw new ApiError(res.status, "load_failed");
-  const { messages } = (await res.json()) as { messages: ChatMessage[] };
-  return messages;
+  type Row = Omit<ChatMessage, "escalation"> & {
+    escalationId: string | null;
+    escalationLane: EscalationLane | null;
+    escalationStatus: EscalationRef["status"] | null;
+  };
+  const { messages } = (await res.json()) as { messages: Row[] };
+  return messages.map(({ escalationId, escalationLane, escalationStatus, ...m }) => ({
+    ...m,
+    escalation: escalationId && escalationLane && escalationStatus ? { id: escalationId, lane: escalationLane, status: escalationStatus } : undefined,
+  }));
+}
+
+export interface HandoffRequest {
+  name: string;
+  email: string;
+  phone: string;
+  note: string;
+  consent: boolean;
+}
+
+export async function requestHandoff(id: string, body: HandoffRequest): Promise<void> {
+  const res = await fetch(`/api/escalations/${id}/request`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ApiError(res.status, b.error ?? "request_failed");
+  }
 }
 
 export async function deleteConversation(id: string): Promise<void> {

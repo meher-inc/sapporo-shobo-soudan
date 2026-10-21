@@ -5,6 +5,7 @@ import { jstDay } from "./caps";
 import { auth } from "./auth";
 import { billing, stripeWebhook } from "./billing";
 import { chat, conversations } from "./chat";
+import { adminEscalations, escalations } from "./escalations";
 import { SERVICE } from "../config/service";
 import { withSharedSecrets } from "./secrets";
 
@@ -43,6 +44,8 @@ app.route("/auth", auth);
 app.get("/api/me", (c) => c.json(publicMe(c.get("user"), c.env)));
 app.route("/api/chat", chat);
 app.route("/api/conversations", conversations);
+app.route("/api/escalations", escalations);
+app.route("/api/admin/escalations", adminEscalations);
 app.route("/api/billing", billing);
 app.route("/api/stripe/webhook", stripeWebhook);
 
