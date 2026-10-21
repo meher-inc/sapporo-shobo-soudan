@@ -4,6 +4,7 @@ import { createAnonymousUser } from "./session";
 import { takeUserQuota } from "./caps";
 import { ASSISTANT_FALLBACK, SYSTEM_PROMPT } from "../config/prompt";
 import { runRules, rulesNote } from "../rules/extract.ts";
+import { detectEscalation, laneRules, type Lane } from "./escalation";
 
 export const chat = new Hono<AppEnv>();
 
@@ -116,11 +117,12 @@ function stalledStream(): ReadableStream<Uint8Array> {
  * Extension point: a service that needs retrieval (RAG) or extra per-turn rules builds `system` here.
  * See CLAUDE.md "拡張" for how the Tokyo fire consultation service adds law citations.
  */
-async function runModel(env: Env, messages: Msg[], question: string, realAi: boolean, rules?: string) {
+async function runModel(env: Env, messages: Msg[], question: string, realAi: boolean, rules?: string, lane?: Lane) {
   if (env.E2E_MODE === "1" && question === "__stall__") return stalledStream();
   if (env.AI_MOCK === "1" && !realAi) return mockStream(question);
   // 設置義務・届出の要否は条文どおりのルールで判定し（src/rules）、結論を固定してからモデルに説明させる
-  const system = rules ? `${SYSTEM_PROMPT}\n\n${rules}` : SYSTEM_PROMPT;
+  // 引き継ぎの扱い（laneRules）は最後に置き、回答の書き方より優先させる
+  const system = [SYSTEM_PROMPT, rules, lane ? laneRules(lane) : ""].filter(Boolean).join("\n\n");
   return (await env.AI.run(env.AI_MODEL as keyof AiModels, {
     messages: [{ role: "system", content: system }, ...messages],
     stream: true,
@@ -173,6 +175,16 @@ chat.post("/", async (c) => {
     .bind(crypto.randomUUID(), conversationId, message, now)
     .run();
 
+  // 行政書士・消防設備士などの資格者にしかできない依頼は、情報提供として答え、引き継ぎを案内する
+  const detected = detectEscalation(message);
+  const escalation = detected ? { id: crypto.randomUUID(), lane: detected.lane, status: "detected" as const } : null;
+  if (detected && escalation) {
+    await db
+      .prepare("INSERT INTO escalations (id, conversation_id, user_id, lane, reasons, question, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(escalation.id, conversationId, user.id, detected.lane, JSON.stringify(detected.reasons), message, now)
+      .run();
+  }
+
   const messages: Msg[] = [...history.reverse(), { role: "user", content: message }];
   const rulesResult = c.env.RULES_ENABLED === "1" ? runRules("sapporo-city", messages.filter((m) => m.role === "user").map((m) => m.content)) : null;
   const rules = rulesResult ? rulesNote(rulesResult) : undefined;
@@ -181,14 +193,14 @@ chat.post("/", async (c) => {
   // Local E2E only: tests that check answer quality opt in to the real model.
   const realAi = c.env.E2E_MODE === "1" && c.req.header("x-test-real-ai") === "1";
   try {
-    source = await runModel(c.env, messages, message, realAi, rules);
+    source = await runModel(c.env, messages, message, realAi, rules, detected?.lane);
   } catch (first) {
     // Workers AI occasionally drops the upstream connection; one retry covers most of these.
     // 4006 is the daily quota, where retrying cannot help.
     console.error("ai_error_retry", first);
     if (String(first).includes("4006")) return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
     try {
-      source = await runModel(c.env, messages, message, realAi, rules);
+      source = await runModel(c.env, messages, message, realAi, rules, detected?.lane);
     } catch (err) {
       console.error("ai_error", err);
       return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
@@ -200,8 +212,8 @@ chat.post("/", async (c) => {
   const stream = textStream(source, (full) => {
     db.batch([
       db
-        .prepare("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, 'assistant', ?, ?)")
-        .bind(crypto.randomUUID(), convId, full, Date.now()),
+        .prepare("INSERT INTO messages (id, conversation_id, role, content, escalation_id, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)")
+        .bind(crypto.randomUUID(), convId, full, escalation?.id ?? null, Date.now()),
       db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").bind(Date.now(), convId),
     ])
       .catch((err) => console.error("save_error", err))
@@ -213,6 +225,7 @@ chat.post("/", async (c) => {
     "content-type": "text/plain; charset=utf-8",
     "cache-control": "no-store",
     "x-conversation-id": convId,
+    ...(escalation ? { "x-escalation": encodeURIComponent(JSON.stringify(escalation)) } : {}),
   });
 });
 
@@ -237,7 +250,9 @@ conversations.get("/:id", async (c) => {
     .first();
   if (!conv) return c.json({ error: "not_found" }, 404);
   const { results } = await c.env.DB.prepare(
-    "SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+    `SELECT m.id, m.role, m.content, e.id AS escalationId, e.lane AS escalationLane, e.status AS escalationStatus
+       FROM messages m LEFT JOIN escalations e ON e.id = m.escalation_id
+      WHERE m.conversation_id = ? ORDER BY m.created_at ASC`,
   )
     .bind(c.req.param("id"))
     .all();

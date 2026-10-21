@@ -436,3 +436,53 @@ test("home page carries search metadata without visible copy", async ({ page, re
   expect(await (await request.get("/robots.txt")).text()).toContain("Sitemap:");
   expect(await (await request.get("/sitemap.xml")).text()).toContain("<urlset");
 });
+
+// ---------------------------------------------------------------------------
+// 専門家への引き継ぎ（行政書士・点検工事の手配）。東京版と同じ
+
+
+test("a request to draft a filing is answered as information and handed to a gyoseishoshi only with consent @local", async ({ page, request }) => {
+  await page.goto("/");
+  const reply = await ask(page, "防火対象物使用開始届を作成してほしいです");
+  const card = reply.getByTestId("handoff-card");
+  await expect(card).toContainText("行政書士");
+  // 自分で作りたい人には、トドケデの作成ツールを案内する
+  await expect(card.getByTestId("handoff-diy").getByRole("link", { name: "トドケデ 書類作成" })).toHaveAttribute("href", "https://docs.todokede.jp/");
+  await expect(card.getByTestId("handoff-diy").getByRole("link", { name: "トドケデ 消防計画" })).toHaveAttribute("href", "https://plan.todokede.jp/");
+  await card.getByTestId("handoff-open").click();
+
+  const sheet = page.getByTestId("handoff-sheet");
+  await expect(sheet).toBeVisible();
+  await sheet.getByTestId("handoff-name").fill("テスト 太郎");
+  const email = uniqueEmail("handoff");
+  await sheet.getByTestId("handoff-email").fill(email);
+  // Nothing is shared until the user agrees.
+  await expect(sheet.getByTestId("handoff-submit")).toBeDisabled();
+  await sheet.getByTestId("handoff-consent").check();
+  await sheet.getByTestId("handoff-submit").click();
+  await expect(card.getByTestId("handoff-done")).toBeVisible();
+
+  // The request reaches the admin list with the contact details.
+  await request.get(`/auth/test-login?email=${encodeURIComponent("s.maru0714@gmail.com")}&next=/`);
+  const list = (await (await request.get("/api/admin/escalations?status=requested")).json()) as { escalations: { email: string; lane: string }[] };
+  expect(list.escalations.some((e) => e.email === email && e.lane === "gyosei")).toBe(true);
+
+  // The card survives reopening the conversation.
+  await page.reload();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("history-item").first().click();
+  await expect(page.getByTestId("handoff-done")).toBeVisible();
+});
+
+test("a general question gets no hand-off card @local", async ({ page }) => {
+  await page.goto("/");
+  const reply = await ask(page, "防火管理者は必要ですか？");
+  await expect(reply.getByTestId("handoff-card")).toHaveCount(0);
+});
+
+test("hand-off requests need consent and the owner's session", async ({ request }) => {
+  const res = await request.post("/api/escalations/not-a-real-id/request", { data: { name: "x", email: "x@example.com", consent: false } });
+  expect([400, 401]).toContain(res.status());
+  const admin = await request.get("/api/admin/escalations");
+  expect(admin.status()).toBe(403);
+});

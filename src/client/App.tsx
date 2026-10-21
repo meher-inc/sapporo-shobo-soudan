@@ -6,9 +6,11 @@ import {
   loadConversation,
   logout,
   openPortal,
+  requestHandoff,
   streamChat,
   type ChatMessage,
   type ConversationSummary,
+  type EscalationRef,
   type Me,
 } from "./api";
 import { SERVICE } from "../config/service";
@@ -16,7 +18,26 @@ import { renderMarkdown } from "./markdown";
 import { Sheet } from "./components/Sheet";
 import { BackIcon, ChatIcon, GoogleIcon, MenuIcon, PlusIcon, SendIcon, StopIcon, TrashIcon } from "./components/Icons";
 
-type SheetKind = "login" | "menu" | null;
+type SheetKind = "login" | "menu" | "handoff" | null;
+
+const HANDOFF = {
+  gyosei: {
+    title: "書類の作成・提出は行政書士に依頼できます",
+    body: "トドケデ提携の行政書士が、内容の確認から作成・提出まで対応します。費用は行政書士からお見積りします。",
+    action: "行政書士に依頼する",
+  },
+  setsubi: {
+    title: "点検・工事の手配を相談できます",
+    body: "トドケデが提携の消防設備士・点検業者におつなぎします。費用は業者からお見積りします。",
+    action: "手配を相談する",
+  },
+  bengoshi: {
+    title: "個別の対応は弁護士へのご相談をおすすめします",
+    body: "違反処理や命令、紛争に関わる内容は、法的な判断が必要です。お近くの弁護士会の法律相談などをご利用ください。",
+    action: null,
+  },
+} as const;
+
 
 function withTransition(fn: () => void) {
   const doc = document as Document & { startViewTransition?: (cb: () => void) => void };
@@ -47,6 +68,9 @@ export function App({ initialMe }: { initialMe: Me }) {
   const [toast, setToast] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
   const [compact, setCompact] = useState(false);
+  const [handoff, setHandoff] = useState<EscalationRef | null>(null);
+  const [handoffForm, setHandoffForm] = useState({ name: "", email: "", phone: "", note: "", consent: false });
+  const [handoffBusy, setHandoffBusy] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
@@ -104,6 +128,7 @@ export function App({ initialMe }: { initialMe: Me }) {
         conversationId,
         (chunk) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, content: x.content + chunk } : x))),
         ctrl.signal,
+        (escalation) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, escalation } : x))),
       );
       if (id) setConversationId(id);
       // The first message creates an anonymous session; reflect it so the menu shows history.
@@ -186,6 +211,36 @@ export function App({ initialMe }: { initialMe: Me }) {
     setHistory((h) => h?.filter((c) => c.id !== id) ?? null);
     await deleteConversation(id);
     if (id === conversationId) newConversation();
+  }
+
+  function openHandoff(e: EscalationRef) {
+    setHandoff(e);
+    setHandoffForm((f) => ({ ...f, email: f.email || me.user?.email || "", name: f.name || me.user?.name || "" }));
+    setSheet("handoff");
+  }
+
+  async function submitHandoff(e: Event) {
+    e.preventDefault();
+    if (!handoff) return;
+    setHandoffBusy(true);
+    try {
+      await requestHandoff(handoff.id, handoffForm);
+      const id = handoff.id;
+      setMessages((m) => m.map((x) => (x.escalation?.id === id ? { ...x, escalation: { ...x.escalation, status: "requested" } } : x)));
+      setSheet(null);
+      flash("ご依頼を受け付けました。担当からご連絡します。");
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : "";
+      flash(
+        code === "invalid_email"
+          ? "メールアドレスの形式をご確認ください。"
+          : code === "invalid_phone"
+            ? "電話番号の形式をご確認ください。"
+            : "送信できませんでした。時間をおいてもう一度お試しください。",
+      );
+    } finally {
+      setHandoffBusy(false);
+    }
   }
 
   async function portal() {
@@ -287,6 +342,9 @@ export function App({ initialMe }: { initialMe: Me }) {
                       </span>
                     )}
                   </div>
+                  {!(streaming && m.id === lastBot?.id) && m.content && m.escalation && (
+                    <Handoff escalation={m.escalation} onOpen={openHandoff} />
+                  )}
                   {!(streaming && m.id === lastBot?.id) && m.content && (
                     <div class="msg-actions">
                       <button
@@ -378,6 +436,80 @@ export function App({ initialMe }: { initialMe: Me }) {
         </Sheet>
       )}
 
+      {sheet === "handoff" && handoff && (
+        <Sheet label="依頼" onClose={() => setSheet(null)} testId="handoff-sheet">
+          <form class="stagger handoff-form" onSubmit={submitHandoff}>
+            <h2>{HANDOFF[handoff.lane].action}</h2>
+            <p>ご連絡先をお知らせください。担当からご連絡し、内容と費用をご案内します。</p>
+            <label>
+              お名前
+              <input
+                required
+                maxLength={60}
+                autocomplete="name"
+                value={handoffForm.name}
+                data-testid="handoff-name"
+                onInput={(e) => setHandoffForm({ ...handoffForm, name: (e.target as HTMLInputElement).value })}
+              />
+            </label>
+            <label>
+              メールアドレス
+              <input
+                type="email"
+                maxLength={254}
+                autocomplete="email"
+                value={handoffForm.email}
+                data-testid="handoff-email"
+                onInput={(e) => setHandoffForm({ ...handoffForm, email: (e.target as HTMLInputElement).value })}
+              />
+            </label>
+            <label>
+              電話番号（任意）
+              <input
+                type="tel"
+                maxLength={30}
+                autocomplete="tel"
+                value={handoffForm.phone}
+                data-testid="handoff-phone"
+                onInput={(e) => setHandoffForm({ ...handoffForm, phone: (e.target as HTMLInputElement).value })}
+              />
+            </label>
+            <label>
+              補足（任意）
+              <textarea
+                rows={3}
+                maxLength={1000}
+                value={handoffForm.note}
+                placeholder="建物の所在地、希望の時期など"
+                onInput={(e) => setHandoffForm({ ...handoffForm, note: (e.target as HTMLTextAreaElement).value })}
+              />
+            </label>
+            <label class="consent">
+              <input
+                type="checkbox"
+                checked={handoffForm.consent}
+                data-testid="handoff-consent"
+                onChange={(e) => setHandoffForm({ ...handoffForm, consent: (e.target as HTMLInputElement).checked })}
+              />
+              <span>
+                この相談のやり取りを、MeHer株式会社を通じて提携の
+                {handoff.lane === "gyosei" ? "行政書士" : "消防設備士・点検業者"}
+                に共有することに同意します。ご依頼の契約と費用は、提携先とお客様の間で決めます。
+              </span>
+            </label>
+            <button
+              type="submit"
+              class="btn btn-primary rp"
+              data-testid="handoff-submit"
+              disabled={handoffBusy || !handoffForm.consent || !handoffForm.name.trim() || !(handoffForm.email.trim() || handoffForm.phone.trim())}
+            >
+              {handoffBusy ? "送信しています…" : "依頼内容を送る"}
+            </button>
+            <p class="terms">メールアドレスか電話番号のどちらかをご入力ください。</p>
+          </form>
+        </Sheet>
+      )}
+
       {sheet === "menu" && (
         <Sheet label="メニュー" onClose={() => setSheet(null)} testId="menu-sheet">
           <div class="stagger">
@@ -454,6 +586,41 @@ export function App({ initialMe }: { initialMe: Me }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Offered under an answer that a licensed professional should take over. */
+function Handoff({ escalation, onOpen }: { escalation: EscalationRef; onOpen: (e: EscalationRef) => void }) {
+  const copy = HANDOFF[escalation.lane];
+  return (
+    <div class={`handoff glass lane-${escalation.lane}`} data-testid="handoff-card">
+      <strong>{copy.title}</strong>
+      <p>{copy.body}</p>
+      {copy.action &&
+        (escalation.status === "requested" ? (
+          <span class="handoff-done" data-testid="handoff-done">
+            ご依頼を受け付けました
+          </span>
+        ) : (
+          <button class="btn btn-primary rp" data-testid="handoff-open" onClick={() => onOpen(escalation)}>
+            {copy.action}
+          </button>
+        ))}
+      {escalation.lane === "gyosei" && <DiyLinks />}
+    </div>
+  );
+}
+
+// 自分で書類を作りたい人向けの案内（トドケデの作成ツール）
+function DiyLinks() {
+  return (
+    <p class="handoff-diy" data-testid="handoff-diy">
+      ご自身で作る場合は、届出書類は
+      <a href="https://docs.todokede.jp/" target="_blank" rel="noopener">トドケデ 書類作成</a>
+      、消防計画は
+      <a href="https://plan.todokede.jp/" target="_blank" rel="noopener">トドケデ 消防計画</a>
+      で作れます。
+    </p>
   );
 }
 
