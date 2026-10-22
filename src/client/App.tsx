@@ -279,7 +279,7 @@ export function App({ initialMe }: { initialMe: Me }) {
     const cached = html.get(m.id + m.content.length);
     if (cached) return cached;
     // 画面のボタン・選択肢と同じ文言を本文に重ねて出さない
-    const out = renderMarkdown(m.actions ? stripEchoes(m.content, m.actions) : m.content);
+    const out = renderMarkdown(stripEchoes(m.content, m.actions));
     html.set(m.id + m.content.length, out);
     return out;
   };
