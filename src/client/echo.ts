@@ -11,6 +11,8 @@ export function stripEchoes(text: string, a: AnswerActions): string {
   return text
     .split("\n")
     .filter((line) => !(line.trim() && onlyLabels.test(line)))
+    // ボタン・選択肢を並べる代わりにモデルが書く、改行タグだけの行も消す
+    .filter((line) => !/^\s*(?:<br\s*\/?>\s*)+$/i.test(line))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
