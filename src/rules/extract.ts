@@ -59,12 +59,13 @@ export function extractFacts(text: string): FilingFacts {
     f.floor_area = num(floorArea[1]);
     rest = rest.replace(floorArea[0], "");
   }
-  const area = rest.match(/(?:延べ|延床|延べ床|床面積)?\s*(?:面積)?\s*(?:が|は)?\s*([\d,]+(?:\.\d+)?)\s*(?:㎡|m2|m²|平米|平方メートル)/);
-  if (area) f.total_area = num(area[1]);
+  const area = rest.match(/(?:延べ|延床|延べ床|床面積)?\s*(?:面積)?\s*(?:が|は)?\s*([\d,]+(?:\.\d+)?)\s*(?:㎡|m2|m²|平米|平方メートル)(\s*未満)?/);
+  // 「150㎡未満」は境目の手前（149㎡）として判定する
+  if (area) f.total_area = num(area[1]) - (area[2] ? 1 : 0);
   const tsubo = !area && t.match(/([\d,]+(?:\.\d+)?)\s*坪/);
   if (tsubo) f.total_area = Math.round(num(tsubo[1]) * 3.30578);
-  const cap = rest.match(/(?:収容人員|定員|従業員|席数|客席)?\s*(?:が|は)?\s*([\d,]+)\s*(?:人|名|席)/);
-  if (cap) f.capacity = num(cap[1]);
+  const cap = rest.match(/(?:収容人員|定員|従業員|席数|客席)?\s*(?:が|は)?\s*([\d,]+)\s*(?:人|名|席)(\s*未満)?/);
+  if (cap) f.capacity = num(cap[1]) - (cap[2] ? 1 : 0);
   if (/平屋/.test(t)) f.floors_above = 1;
   const floors = t.match(/(?:地上)?\s*(\d{1,2})\s*階建/);
   if (floors) f.floors_above = num(floors[1]);
@@ -219,7 +220,7 @@ export function runRules(jurisdiction: Jurisdiction, userTexts: string[]): Rules
 export function rulesNote(r: RulesResult): string {
   const out = ["# ルールによる判定結果（この回答の結論はこれに従う）"];
   out.push("相談文から読み取った条件で、条文どおりに機械的に判定した結果です。「個別の要否を断定しない」という指示より、この判定結果を優先します。結論（必要／不要／条件次第）と期限・提出先はこのとおりに書き、変えないでください。");
-  out.push("「条件次第」の項目は断定せず、足りない情報を最大3つまで質問してください。読み取った条件が相談内容と違う場合は、そのことを伝えて確認してください。");
+  out.push("「条件次第」の項目は断定せず、足りない情報は1つだけ質問してください（画面に選択肢が出るときはそれに合わせる）。面積や人数は、相談者が書いた言い方（「150㎡未満」など）のまま書き、読み取った数値に言い換えないでください。読み取った条件が相談内容と違う場合は、そのことを伝えて確認してください。");
   out.push("答え方: 相談者が聞いた設備・届出の結論と根拠を最初に書きます。「必要」を「可能性がある」などと弱めず、条文の条件（「地階・無窓階」は地階又は無窓階）を言い換えないでください。聞かれていない項目は「必要」のものを一文ずつ、「条件次第」のものはまとめて一文で触れ、「不要」の項目は省きます。このメモの見出しや箇条書きをそのまま写さず、相談者に向けた文章にしてください。");
   const f = r.facts;
   const cond = [
@@ -247,7 +248,7 @@ export function rulesNote(r: RulesResult): string {
       if (others.length) out.push("## そのほかの設備・防火管理者（必要なものを短く添える）");
     } else out.push("## 消防用設備等・防火管理者（消防法施行令と条例）");
     for (const x of others) out.push(fmt(x));
-    out.push("総務省令の除外・令第32条の特例はこの判定に含まれていません（条例の上乗せは、判定に入っている管轄だけ根拠欄に条例を示しています）。最終的な判断は所轄の消防署が行う旨を添えてください。");
+    out.push("総務省令の除外・令第32条の特例はこの判定に含まれていません（条例の上乗せは、判定に入っている管轄だけ根拠欄に条例を示しています）。最終的な判断は所轄の消防署が行う旨は、締めくくりの一文（トドケデで作り、出す前に消防署で確認）に含めれば足ります。");
   }
   return out.join("\n");
 }
