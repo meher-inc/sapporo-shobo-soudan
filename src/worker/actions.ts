@@ -131,9 +131,11 @@ export function buildActions(input: { userTexts: string[]; rules: RulesResult | 
 /** モデルに渡す、画面に出るボタンの説明。URL・電話番号を本文に重ねて書かせない */
 export function actionsNote(a: Actions): string {
   const out = ["# 画面のボタン（本文の書き方に反映する）"];
-  out.push("URL は本文に書かないでください。トドケデの作成ツールや消防署の電話は、回答の下にボタンで表示されます。");
+  out.push("URL は本文に書かないでください。");
   if (a.buttons.length) out.push(`この回答の下に表示されるボタン: ${a.buttons.map((b) => `「${b.label}」`).join("")}。案内するときは「下のボタンから」と書くだけにし、ボタンの名前・URL・電話番号を本文に書き出さないでください。`);
-  else out.push("この回答の下に作成ツールのボタンは出ません。作成ツールの名前や URL を本文に書かないでください。");
+  // 電話のボタンだけのときも、作成ツールには触れさせない（ボタンが無いのに「下のボタンから作れます」と書くため）
+  if (!a.buttons.some((b) => b.kind === "link"))
+    out.push("この回答の下に作成ツールのボタンは出ません。作成ツールには触れず、名前・URL・「下のボタンから作れます」のような案内を書かないでください。");
   if (a.question)
     out.push(`この回答の下に「${a.question.text}」の選択肢（${a.question.options.map((o) => o.label).join("／")}）が表示されます。相談者への質問はこの1つだけにし、回答の最後に1文で短く聞いてください。選択肢は画面にボタンで出るので、本文に並べたり [ ] で囲んで書いたりしないでください。ほかの質問はしないでください。`);
   else out.push("情報が足りないときの質問は1つだけにしてください。");

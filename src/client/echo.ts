@@ -15,6 +15,8 @@ export function stripEchoes(text: string, a: AnswerActions = { buttons: [] }): s
     .filter((line) => !(line.trim() && onlyLabels.test(line)))
     // ボタン・選択肢を並べる代わりにモデルが書く、改行タグだけの行も消す
     .filter((line) => !/^\s*(?:<br\s*\/?>\s*)+$/i.test(line))
+    // 作成ツールのボタンが出ていない回答では、作成ツールへの案内の行を消す
+    .filter((line) => a.buttons.some((b) => !("kind" in b) || b.kind === "link") || !/作成ツール/.test(line))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
