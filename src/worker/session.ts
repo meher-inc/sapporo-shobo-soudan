@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv, Env, User } from "./env";
 import { SERVICE } from "../config/service";
+import { isTestVisit, visitSource } from "./traffic";
 
 const SESSION_COOKIE = "sid";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -71,9 +72,9 @@ export async function createAnonymousUser(c: Context<AppEnv>): Promise<User | nu
   const id = crypto.randomUUID();
   const now = Date.now();
   await c.env.DB.prepare(
-    "INSERT INTO users (id, google_sub, email, is_anonymous, ip_hash, created_at) VALUES (?, ?, '', 1, ?, ?)",
+    "INSERT INTO users (id, google_sub, email, is_anonymous, ip_hash, source, is_test, created_at) VALUES (?, ?, '', 1, ?, ?, ?, ?)",
   )
-    .bind(id, `anon:${id}`, ipHash, now)
+    .bind(id, `anon:${id}`, ipHash, visitSource(c), isTestVisit(c) ? 1 : 0, now)
     .run();
   await createSession(c, id);
   return (await c.env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<User>())!;

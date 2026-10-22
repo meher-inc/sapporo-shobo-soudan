@@ -532,3 +532,19 @@ test("回答の下の入口が押された回数を記録する @local", async (
   const bad = await request.post("/api/click", { data: JSON.stringify({ kind: "other", label: "x" }), headers: { "content-type": "text/plain" } });
   expect(bad.status()).toBe(400);
 });
+
+test("流入元を最初の接触で記録し、?test=1 の端末は試験として数えない @local", async ({ page }) => {
+  await page.goto("/?utm_source=todokede_widget&utm_content=plan");
+  await ask(page, "飲食店の届出を知りたい");
+  expect(await (await page.request.get("/api/test/traffic")).json()).toEqual({ source: "todokede_widget:plan", is_test: 0 });
+  // 同じ端末で試験の印をつけると、その利用者は試験に切り替わる（流入元は変えない）
+  await page.goto("/?test=1");
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  expect(await (await page.request.get("/api/test/traffic")).json()).toEqual({ source: "todokede_widget:plan", is_test: 1 });
+});
+
+test("何もつけずに開いた利用者は direct として記録する @local", async ({ page }) => {
+  await page.goto("/");
+  await ask(page, "消防の届出を知りたい");
+  expect(await (await page.request.get("/api/test/traffic")).json()).toEqual({ source: "direct", is_test: 0 });
+});

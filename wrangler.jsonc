@@ -57,6 +57,8 @@
     "USER_DAILY_MESSAGE_LIMIT": "20",
     // 引き継ぎ一覧（/api/admin/escalations）を見られるアカウント
     "ADMIN_EMAILS": "s.maru0714@gmail.com",
+    // 試験として相談件数から除くアカウント（ADMIN_EMAILS も除く）。端末は ?test=1 で開くと試験になる。src/worker/traffic.ts
+    "TEST_EMAILS": "shun_maruoka@meher-inc.co.jp",
     // 専門家への依頼の通知。NOTIFY_TO はカンマ区切りで複数可
     "NOTIFY_FROM": "notify@meher-edge.com",
     "NOTIFY_TO": "info@todokede.jp"

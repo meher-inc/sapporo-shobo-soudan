@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "./env";
 import { base64url, createSession, destroySession, isHttps, randomToken } from "./session";
+import { isTestVisit, visitSource } from "./traffic";
 
 const OAUTH_COOKIE = "oauth";
 
@@ -18,19 +19,20 @@ function redirectUri(url: string): string {
 async function upsertUser(
   db: D1Database,
   profile: { sub: string; email: string; name?: string; picture?: string },
+  visit: { source: string; isTest: boolean },
 ): Promise<string> {
   const existing = await db.prepare("SELECT id FROM users WHERE google_sub = ?").bind(profile.sub).first<{ id: string }>();
   if (existing) {
     await db
-      .prepare("UPDATE users SET email = ?, name = ?, picture = ? WHERE id = ?")
-      .bind(profile.email, profile.name ?? null, profile.picture ?? null, existing.id)
+      .prepare("UPDATE users SET email = ?, name = ?, picture = ?, is_test = MAX(is_test, ?) WHERE id = ?")
+      .bind(profile.email, profile.name ?? null, profile.picture ?? null, visit.isTest ? 1 : 0, existing.id)
       .run();
     return existing.id;
   }
   const id = crypto.randomUUID();
   await db
-    .prepare("INSERT INTO users (id, google_sub, email, name, picture, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(id, profile.sub, profile.email, profile.name ?? null, profile.picture ?? null, Date.now())
+    .prepare("INSERT INTO users (id, google_sub, email, name, picture, source, is_test, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, profile.sub, profile.email, profile.name ?? null, profile.picture ?? null, visit.source, visit.isTest ? 1 : 0, Date.now())
     .run();
   return id;
 }
@@ -115,7 +117,7 @@ auth.get("/callback", async (c) => {
     return c.redirect("/?login=failed");
   }
 
-  const userId = await upsertUser(c.env.DB, payload);
+  const userId = await upsertUser(c.env.DB, payload, { source: c.get("user")?.source ?? visitSource(c), isTest: isTestVisit(c, payload.email) || Boolean(c.get("user")?.is_test) });
   await adoptAnonymous(c, userId);
   await createSession(c, userId);
   return c.redirect(safeNext(saved.next));
@@ -131,7 +133,7 @@ auth.get("/test-login", async (c) => {
   const host = new URL(c.req.url).hostname;
   if (c.env.E2E_MODE !== "1" || !(host === "localhost" || host === "127.0.0.1")) return c.notFound();
   const email = c.req.query("email") ?? "tester@example.com";
-  const userId = await upsertUser(c.env.DB, { sub: `test-${email}`, email, name: "テスト ユーザー" });
+  const userId = await upsertUser(c.env.DB, { sub: `test-${email}`, email, name: "テスト ユーザー" }, { source: visitSource(c), isTest: isTestVisit(c, email) });
   await adoptAnonymous(c, userId);
   await createSession(c, userId);
   return c.redirect(safeNext(c.req.query("next")));
