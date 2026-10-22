@@ -991,7 +991,7 @@ function nagoyaOverlay(base: Verdict, o: Occ, f: Facts): Verdict {
   }
 }
 
-export type InstallJurisdiction = "jp" | "kyoto-city" | "tokyo-tfd" | "nagoya-city" | "osaka-city" | "yokohama-city" | CityJurisdiction;
+export type InstallJurisdiction = "jp" | "general" | "kyoto-city" | "tokyo-tfd" | "nagoya-city" | "osaka-city" | "yokohama-city" | CityJurisdiction;
 
 export function judge(equipment: Equipment, facts: Facts, jurisdiction: InstallJurisdiction = "jp"): Verdict {
   const o = parseOccupancy(facts.occupancy);
@@ -1000,6 +1000,8 @@ export function judge(equipment: Equipment, facts: Facts, jurisdiction: InstallJ
   if (jurisdiction === "kyoto-city") return kyotoOverlay(base, o, facts);
   if (jurisdiction === "tokyo-tfd") return tokyoOverlay(base, o, facts);
   if (jurisdiction === "nagoya-city") return nagoyaOverlay(base, o, facts);
+  // 一般版（政令指定都市以外など、条例を確認していない地域）: 国の政令だけで判定し、条例の上乗せがありうることを添える
+  if (jurisdiction === "general") return { ...base, caveats: [...base.caveats, "建物がある市町村の火災予防条例で、設置の基準が上乗せされている場合がある（この判定には入っていない。所轄の消防本部で確認）"] };
   if (jurisdiction !== "jp") return { ...base, caveats: [...base.caveats, "この管轄の火災予防条例による上乗せは、まだ判定に入っていない"] };
   return base;
 }

@@ -43,7 +43,10 @@ test("accent colour is readable on white (WCAG AA, 4.5:1)", () => {
 test("fire stations: every station has a name, an area, an address and a phone number, and is in the prompt", async () => {
   const { STATIONS } = await import("../../src/config/stations.ts");
   const { SYSTEM_PROMPT } = await import("../../src/config/prompt.ts");
-  assert.ok(STATIONS.length > 0, "at least one station");
+  const { SERVICE } = await import("../../src/config/service.ts");
+  // 一般版（全国）は消防署の一覧を持たず、所在地の消防本部を案内する
+  if (SERVICE.areaServed === "日本") assert.equal(STATIONS.length, 0, "the nationwide version has no station list");
+  else assert.ok(STATIONS.length > 0, "at least one station");
   assert.equal(new Set(STATIONS.map((s) => s.name)).size, STATIONS.length, "station names are unique");
   for (const s of STATIONS) {
     assert.ok(s.name.endsWith("消防署") || s.name.includes("消防"), `${s.name}: is a fire station`);

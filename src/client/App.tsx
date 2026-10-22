@@ -8,6 +8,7 @@ import {
   openPortal,
   requestHandoff,
   streamChat,
+  type AnswerActions,
   type ChatMessage,
   type ConversationSummary,
   type EscalationRef,
@@ -15,6 +16,7 @@ import {
 } from "./api";
 import { SERVICE } from "../config/service";
 import { renderMarkdown } from "./markdown";
+import { stripEchoes } from "./echo";
 import { Sheet } from "./components/Sheet";
 import { BackIcon, ChatIcon, GoogleIcon, MenuIcon, PlusIcon, SendIcon, StopIcon, TrashIcon } from "./components/Icons";
 
@@ -96,7 +98,8 @@ export function App({ initialMe }: { initialMe: Me }) {
   useEffect(() => {
     const el = thread.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    // 回答が終わると下にボタンと選択肢が出るので、そこまで見せる
+  }, [messages, streaming]);
 
   function history_replace() {
     window.history.replaceState(null, "", "/");
@@ -129,6 +132,7 @@ export function App({ initialMe }: { initialMe: Me }) {
         (chunk) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, content: x.content + chunk } : x))),
         ctrl.signal,
         (escalation) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, escalation } : x))),
+        (actions) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, actions } : x))),
       );
       if (id) setConversationId(id);
       // The first message creates an anonymous session; reflect it so the menu shows history.
@@ -274,7 +278,8 @@ export function App({ initialMe }: { initialMe: Me }) {
     if (streaming && m.id === lastBot?.id) return renderMarkdown(m.content);
     const cached = html.get(m.id + m.content.length);
     if (cached) return cached;
-    const out = renderMarkdown(m.content);
+    // 画面のボタン・選択肢と同じ文言を本文に重ねて出さない
+    const out = renderMarkdown(m.actions ? stripEchoes(m.content, m.actions) : m.content);
     html.set(m.id + m.content.length, out);
     return out;
   };
@@ -344,6 +349,15 @@ export function App({ initialMe }: { initialMe: Me }) {
                   </div>
                   {!(streaming && m.id === lastBot?.id) && m.content && m.escalation && (
                     <Handoff escalation={m.escalation} onOpen={openHandoff} />
+                  )}
+                  {!streaming && m.id === lastBot?.id && m.content && m.actions && (
+                    <AnswerActionsView
+                      actions={m.actions}
+                      onReply={(text) => {
+                        if (text) void send(text);
+                        else textarea.current?.focus();
+                      }}
+                    />
                   )}
                   {!(streaming && m.id === lastBot?.id) && m.content && (
                     <div class="msg-actions">
@@ -606,21 +620,57 @@ function Handoff({ escalation, onOpen }: { escalation: EscalationRef; onOpen: (e
             {copy.action}
           </button>
         ))}
-      {escalation.lane === "gyosei" && <DiyLinks />}
     </div>
   );
 }
 
-// 自分で書類を作りたい人向けの案内（トドケデの作成ツール）
-function DiyLinks() {
+// 回答の下のボタンと選択肢（LINE のように押すだけで進める）。いちばん新しい回答にだけ出す
+function AnswerActionsView({ actions, onReply }: { actions: AnswerActions; onReply: (text: string) => void }) {
   return (
-    <p class="handoff-diy" data-testid="handoff-diy">
-      ご自身で作る場合は、届出書類は
-      <a href="https://docs.todokede.jp/" target="_blank" rel="noopener">トドケデ 書類作成</a>
-      、消防計画は
-      <a href="https://plan.todokede.jp/" target="_blank" rel="noopener">トドケデ 消防計画</a>
-      で作れます。
-    </p>
+    <div class="answer-actions" data-testid="answer-actions">
+      {actions.buttons.length > 0 && (
+        <div class="action-buttons">
+          {actions.buttons.map((b, i) => (
+            <a
+              key={b.href}
+              class={`action-btn glass rp${i === 0 && b.kind === "link" ? " primary" : ""}${b.kind === "tel" ? " tel" : ""}`}
+              href={b.href}
+              {...(b.kind === "link" ? { target: "_blank", rel: "noopener" } : {})}
+              data-testid="action-button"
+              style={{ animationDelay: `${0.05 + i * 0.06}s` }}
+              onClick={addRipple}
+            >
+              <span class="action-label">{b.label}</span>
+              {b.sub && <span class="action-sub">{b.sub}</span>}
+              <span class="action-arrow" aria-hidden="true">
+                {b.kind === "tel" ? "☎" : "›"}
+              </span>
+            </a>
+          ))}
+        </div>
+      )}
+      {actions.question && (
+        <div class="quick" data-testid="quick-replies">
+          <p class="quick-q">{actions.question.text}</p>
+          <div class="quick-chips">
+            {actions.question.options.map((o, i) => (
+              <button
+                key={o.label}
+                class={`quick-chip glass rp${o.text ? "" : " other"}`}
+                style={{ animationDelay: `${0.1 + i * 0.04}s` }}
+                data-testid="quick-reply"
+                onClick={(e) => {
+                  addRipple(e);
+                  onReply(o.text);
+                }}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

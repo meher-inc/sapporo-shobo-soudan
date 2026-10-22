@@ -14,7 +14,7 @@ import { CITY_FILINGS, type CityJurisdiction } from "./cities/index.ts";
 
 export type { Facility, FilingFacts, FilingVerdict, Scene } from "./filing-base.ts";
 
-export type Jurisdiction = "kyoto-city" | "tokyo-tfd" | "nagoya-city" | "osaka-city" | "yokohama-city" | CityJurisdiction;
+export type Jurisdiction = "general" | "kyoto-city" | "tokyo-tfd" | "nagoya-city" | "osaka-city" | "yokohama-city" | CityJurisdiction;
 
 const K_JO = "京都市火災予防条例";
 const K_KI = "京都市火災予防規則";
@@ -350,6 +350,8 @@ export function judgeFilings(jurisdiction: Jurisdiction, scene: Scene, facts: Fi
       return osaka(scene, facts);
     case "yokohama-city":
       return yokohama(scene, facts);
+    case "general":
+      return generalFilings(scene, facts);
     default:
       return CITY_FILINGS[jurisdiction](scene, facts);
   }
@@ -361,3 +363,76 @@ function commonKyotoTokyo(scene: Scene, f: FilingFacts, target: string, jo: stri
   return [v({ procedure: scene, title: "届出", target, result: "conditional", basis: jo, reason: "この場面の届出は個別に確認が必要" })];
 }
 
+
+// ---- 一般版（条例を確認していない地域） ----
+// 火災予防条例の届出は市町村ごとに定めるため、所在地の条例は判定できない。
+// 代わりに、条文を確認済みの管轄（下の VERIFIED）で同じ条件を判定し、結論と期限の分かれ方をそのまま示す。
+// 管轄の結論がすべて一致したときだけその結論を使い、分かれたときは「条件次第」にする。期限は断定しない。
+// 消防訓練の通報は国の規則なので drillNational をそのまま使う。
+
+export const VERIFIED: Exclude<Jurisdiction, "general">[] = [
+  "sapporo-city", "sendai-city", "saitama-city", "chiba-city", "tokyo-tfd", "yokohama-city", "kawasaki-city", "sagamihara-city",
+  "niigata-city", "shizuoka-city", "hamamatsu-city", "nagoya-city", "kyoto-city", "osaka-city", "sakai-city", "kobe-city",
+  "okayama-city", "hiroshima-city", "kitakyushu-city", "fukuoka-city", "kumamoto-city",
+];
+
+const RESULT_LABEL = { required: "必要", not_required: "不要", conditional: "条件次第" } as const;
+
+/** 期限の書き方を比べられる形にそろえる（「あらかじめ（規則により5日前まで）」は5日前に数える） */
+export function deadlineKind(d: string | undefined): string {
+  if (!d) return "定めなし";
+  if (/前日|1日前/.test(d)) return "前日まで";
+  const m = d.match(/(\d+)日前/);
+  if (m) return `${m[1]}日前まで`;
+  if (/あらかじめ|前/.test(d)) return "あらかじめ（日数の定めなし）";
+  return "その他";
+}
+
+const tally = (xs: string[]) => {
+  const m = new Map<string, number>();
+  for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1);
+  return [...m.entries()].sort((a, b) => b[1] - a[1]);
+};
+
+export function generalFilings(scene: Scene, f: FilingFacts): FilingVerdict[] {
+  const target = "所在地の消防署（消防本部）";
+  const basis = "建物や催しの所在地の市町村の火災予防条例";
+  if (scene === "drill")
+    return drillNational(f, "所轄の消防機関").map((x) => ({
+      ...x,
+      caveats: [...x.caveats, "市町村の条例で、別に届出の期限や様式を定めている場合がある（確認済みの管轄では名古屋市・千葉市が3日前まで）"],
+    }));
+  const per = VERIFIED.map((j) => judgeFilings(j, scene, f)[0]).filter((x): x is FilingVerdict => !!x);
+  if (!per.length) return [];
+  const n = per.length;
+  const results = tally(per.map((x) => x.result));
+  const unanimous = results.length === 1;
+  const result = unanimous ? per[0].result : "conditional";
+  const title = tally(per.map((x) => x.title))[0][0];
+  const resultSummary = results.map(([r, c]) => `${RESULT_LABEL[r as keyof typeof RESULT_LABEL]}${c}`).join("・");
+  const withDeadline = per.filter((x) => x.result !== "not_required");
+  const deadlines = tally(withDeadline.map((x) => deadlineKind(x.deadline)));
+  const deadline = withDeadline.length
+    ? `所在地の条例で確認（確認済みの${withDeadline.length}管轄では ${deadlines.map(([k, c]) => `${k}${c}`).join("、")}）`
+    : undefined;
+  const missing = result === "conditional" ? [...new Set(per.flatMap((x) => x.missing))] : [];
+  const reason = unanimous
+    ? `条文を確認済みの${n}管轄（政令指定都市など）では、この条件ならすべて「${RESULT_LABEL[result]}」。所在地の市町村の条例は未確認`
+    : `条文を確認済みの${n}管轄でも結論が分かれる（${resultSummary}）。所在地の市町村の条例で決まる`;
+  return [
+    v({
+      procedure: per[0].procedure,
+      title,
+      target,
+      result,
+      deadline,
+      basis,
+      reason,
+      missing,
+      caveats: [
+        "期限・様式・提出先・対象の範囲は市町村の火災予防条例で決まる。所在地の消防本部で確認する",
+        "消防庁が市町村向けに火災予防条例（例）を示しているが、各市町村の条例は内容や条番号が違うことがある",
+      ],
+    }),
+  ];
+}

@@ -5,6 +5,7 @@ import { takeUserQuota } from "./caps";
 import { ASSISTANT_FALLBACK, SYSTEM_PROMPT } from "../config/prompt";
 import { runRules, rulesNote } from "../rules/extract.ts";
 import { detectEscalation, laneRules, type Lane } from "./escalation";
+import { actionsNote, buildActions, type Actions } from "./actions";
 
 export const chat = new Hono<AppEnv>();
 
@@ -17,6 +18,9 @@ function titleFrom(text: string): string {
   const oneLine = text.replace(/\s+/g, " ").trim();
   return oneLine.length > 28 ? `${oneLine.slice(0, 28)}…` : oneLine;
 }
+
+/** 今まさに危険がある相談。回答の下に119番のボタンだけを出す */
+const EMERGENCY = /燃えて(い|る)|火事です|火が出た|煙が出てい|閉じ込められ|人が倒れ/;
 
 const IDLE_TIMEOUT_MS = 25_000;
 const STALLED_NOTE = "\n\n（回答の生成が途中で止まりました。もう一度お試しください。）";
@@ -117,12 +121,13 @@ function stalledStream(): ReadableStream<Uint8Array> {
  * Extension point: a service that needs retrieval (RAG) or extra per-turn rules builds `system` here.
  * See CLAUDE.md "拡張" for how the Tokyo fire consultation service adds law citations.
  */
-async function runModel(env: Env, messages: Msg[], question: string, realAi: boolean, rules?: string, lane?: Lane) {
+async function runModel(env: Env, messages: Msg[], question: string, realAi: boolean, rules?: string, lane?: Lane, actions?: Actions) {
   if (env.E2E_MODE === "1" && question === "__stall__") return stalledStream();
   if (env.AI_MOCK === "1" && !realAi) return mockStream(question);
   // 設置義務・届出の要否は条文どおりのルールで判定し（src/rules）、結論を固定してからモデルに説明させる
   // 引き継ぎの扱い（laneRules）は最後に置き、回答の書き方より優先させる
-  const system = [SYSTEM_PROMPT, rules, lane ? laneRules(lane) : ""].filter(Boolean).join("\n\n");
+  // 画面に出るボタンの説明は判定メモの後、引き継ぎの扱いの前に置く
+  const system = [SYSTEM_PROMPT, rules, actions ? actionsNote(actions) : "", lane ? laneRules(lane) : ""].filter(Boolean).join("\n\n");
   return (await env.AI.run(env.AI_MODEL as keyof AiModels, {
     messages: [{ role: "system", content: system }, ...messages],
     stream: true,
@@ -188,19 +193,22 @@ chat.post("/", async (c) => {
   const messages: Msg[] = [...history.reverse(), { role: "user", content: message }];
   const rulesResult = c.env.RULES_ENABLED === "1" ? runRules("sapporo-city", messages.filter((m) => m.role === "user").map((m) => m.content)) : null;
   const rules = rulesResult ? rulesNote(rulesResult) : undefined;
+  // 回答の下に出すボタンと選択肢。モデルにも伝え、本文にURLや別の質問を重ねて書かせない
+  const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content);
+  const actions = buildActions({ userTexts, rules: rulesResult, lane: detected?.lane, emergency: EMERGENCY.test(message) });
   const convId = conversationId;
   let source: ReadableStream<Uint8Array>;
   // Local E2E only: tests that check answer quality opt in to the real model.
   const realAi = c.env.E2E_MODE === "1" && c.req.header("x-test-real-ai") === "1";
   try {
-    source = await runModel(c.env, messages, message, realAi, rules, detected?.lane);
+    source = await runModel(c.env, messages, message, realAi, rules, detected?.lane, actions);
   } catch (first) {
     // Workers AI occasionally drops the upstream connection; one retry covers most of these.
     // 4006 is the daily quota, where retrying cannot help.
     console.error("ai_error_retry", first);
     if (String(first).includes("4006")) return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
     try {
-      source = await runModel(c.env, messages, message, realAi, rules, detected?.lane);
+      source = await runModel(c.env, messages, message, realAi, rules, detected?.lane, actions);
     } catch (err) {
       console.error("ai_error", err);
       return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
@@ -226,6 +234,7 @@ chat.post("/", async (c) => {
     "cache-control": "no-store",
     "x-conversation-id": convId,
     ...(escalation ? { "x-escalation": encodeURIComponent(JSON.stringify(escalation)) } : {}),
+    ...(actions.buttons.length || actions.question ? { "x-actions": encodeURIComponent(JSON.stringify(actions)) } : {}),
   });
 });
 
