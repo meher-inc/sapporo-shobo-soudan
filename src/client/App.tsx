@@ -18,6 +18,8 @@ import { SERVICE } from "../config/service";
 import { renderMarkdown } from "./markdown";
 import { stripEchoes } from "./echo";
 import { Sheet } from "./components/Sheet";
+import { Hearing } from "./components/Hearing";
+import type { HearingAnswers } from "../hearing/hearing";
 import { BackIcon, ChatIcon, GoogleIcon, MenuIcon, PlusIcon, SendIcon, StopIcon, TrashIcon } from "./components/Icons";
 
 type SheetKind = "login" | "menu" | "handoff" | null;
@@ -73,6 +75,9 @@ export function App({ initialMe }: { initialMe: Me }) {
   const [handoff, setHandoff] = useState<EscalationRef | null>(null);
   const [handoffForm, setHandoffForm] = useState({ name: "", email: "", phone: "", note: "", consent: false });
   const [handoffBusy, setHandoffBusy] = useState(false);
+  // 行政書士への依頼は、連絡先の前に届出の種類ごとのヒアリングをする（hearingDone で連絡先へ進む）
+  const [hearing, setHearing] = useState<HearingAnswers | null>(null);
+  const [hearingDone, setHearingDone] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
@@ -218,6 +223,10 @@ export function App({ initialMe }: { initialMe: Me }) {
   }
 
   function openHandoff(e: EscalationRef) {
+    if (handoff?.id !== e.id) {
+      setHearing(null);
+      setHearingDone(false);
+    }
     setHandoff(e);
     setHandoffForm((f) => ({ ...f, email: f.email || me.user?.email || "", name: f.name || me.user?.name || "" }));
     setSheet("handoff");
@@ -228,7 +237,7 @@ export function App({ initialMe }: { initialMe: Me }) {
     if (!handoff) return;
     setHandoffBusy(true);
     try {
-      await requestHandoff(handoff.id, handoffForm);
+      await requestHandoff(handoff.id, { ...handoffForm, hearing: handoff.lane === "gyosei" ? hearing : null });
       const id = handoff.id;
       setMessages((m) => m.map((x) => (x.escalation?.id === id ? { ...x, escalation: { ...x.escalation, status: "requested" } } : x)));
       setSheet(null);
@@ -452,7 +461,20 @@ export function App({ initialMe }: { initialMe: Me }) {
 
       {sheet === "handoff" && handoff && (
         <Sheet label="依頼" onClose={() => setSheet(null)} testId="handoff-sheet">
+          {handoff.lane === "gyosei" && !hearingDone ? (
+            <Hearing
+              escalationId={handoff.id}
+              value={hearing}
+              onChange={setHearing}
+              onDone={(a) => {
+                setHearing(a);
+                setHearingDone(true);
+                document.querySelector(".sheet")?.scrollTo({ top: 0 });
+              }}
+            />
+          ) : (
           <form class="stagger handoff-form" onSubmit={submitHandoff}>
+            {handoff.lane === "gyosei" && <p class="hearing-step">4 / 4 ・ ご連絡先</p>}
             <h2>{HANDOFF[handoff.lane].action}</h2>
             <p>ご連絡先をお知らせください。担当からご連絡し、内容と費用をご案内します。</p>
             <label>
@@ -520,7 +542,13 @@ export function App({ initialMe }: { initialMe: Me }) {
               {handoffBusy ? "送信しています…" : "依頼内容を送る"}
             </button>
             <p class="terms">メールアドレスか電話番号のどちらかをご入力ください。</p>
+            {handoff.lane === "gyosei" && (
+              <button type="button" class="hearing-skip" onClick={() => setHearingDone(false)}>
+                ヒアリングに戻る
+              </button>
+            )}
           </form>
+          )}
         </Sheet>
       )}
 

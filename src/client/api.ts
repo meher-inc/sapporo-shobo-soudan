@@ -1,3 +1,4 @@
+import type { HearingAnswers, HearingType } from "../hearing/hearing";
 /** 相談は無料。"paid" は以前に月額プランへ登録した利用者 */
 export type Access = "free" | "paid";
 
@@ -120,6 +121,15 @@ export interface HandoffRequest {
   phone: string;
   note: string;
   consent: boolean;
+  /** 行政書士への依頼で、届出の種類ごとのヒアリングに答えたとき */
+  hearing?: HearingAnswers | null;
+}
+
+/** ヒアリングの初期値（相談の文面から推した届出の種類と、すでに分かっている項目） */
+export async function loadHearing(id: string): Promise<{ type: HearingType; values: Record<string, string> }> {
+  const res = await fetch(`/api/escalations/${id}/hearing`);
+  if (!res.ok) throw new ApiError(res.status, "hearing_failed");
+  return res.json();
 }
 
 export async function requestHandoff(id: string, body: HandoffRequest): Promise<void> {

@@ -299,6 +299,51 @@ textarea { font: inherit; }
 
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.35s; }
 
+/* 行政書士に依頼する前のヒアリング（届出の種類 → 建物と時期 → 資料の持ち主） */
+.hearing h2 { font-size: 19px; margin: 2px 0 6px; }
+.hearing-step { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: .02em; }
+.hearing-lead { margin: 0 0 14px; font-size: 13.5px; line-height: 1.7; color: var(--ink-2); }
+.hearing-types { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.hearing-type {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 16px;
+  border: 1.5px solid transparent; transition: transform .35s var(--spring), border-color .2s, background .2s;
+  animation: chipIn .6s var(--spring) both;
+}
+.hearing-type strong { font-size: 15px; color: var(--ink); }
+.hearing-type span { font-size: 12.5px; color: var(--ink-3); }
+.hearing-type:active { transform: scale(.97); }
+.hearing-type.on { border-color: var(--accent-line); background: var(--accent-soft); }
+.hearing-section { border: 0; margin: 0 0 18px; padding: 0; min-width: 0; }
+.hearing-section legend { font-size: 12px; font-weight: 700; color: var(--ink-3); margin-bottom: 8px; padding: 0 2px; }
+.hearing-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.hearing-label { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.hearing-label em { font-style: normal; font-size: 11px; color: var(--accent); margin-left: 6px; }
+.hearing-field small { font-size: 12px; line-height: 1.6; color: var(--ink-3); }
+.hearing-field input, .hearing-when {
+  font: inherit; font-size: 16px; color: var(--ink); padding: 10px 12px; border-radius: 12px; min-width: 0; width: 100%;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .8); outline: 0;
+}
+.hearing-field input:focus, .hearing-when:focus { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.hearing-when { margin-top: 8px; font-size: 16px; }
+.hearing-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.hearing-chip {
+  min-height: 44px; padding: 8px 14px; border-radius: 999px; font-size: 14px; color: var(--ink-2);
+  border: 1.5px solid rgba(20, 24, 33, .1); background: rgba(255, 255, 255, .55);
+  transition: transform .35s var(--spring), background .2s, border-color .2s, color .2s;
+}
+.hearing-chip:active { transform: scale(.94); }
+.hearing-chip.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); font-weight: 600; }
+.hearing-alerts { margin: 0 0 14px; padding: 10px 12px; border-radius: 14px; background: var(--accent-soft); animation: popIn .45s var(--spring) both; }
+.hearing-alerts p { margin: 0; font-size: 13px; line-height: 1.7; color: var(--ink); }
+.hearing-draft { margin: 4px 0 14px; padding: 12px 14px; border-radius: 16px; animation: msgIn .55s var(--spring) both; }
+.hearing-draft-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.hearing-draft-head strong { font-size: 13.5px; }
+.hearing-copy { min-height: 36px; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent-line); }
+.hearing-draft pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 13px; line-height: 1.7; color: var(--ink-2); }
+.hearing-nav { display: flex; gap: 8px; }
+.hearing-nav .btn-ghost { flex: 0 0 34%; }
+.hearing-skip { display: block; margin: 10px auto 0; min-height: 44px; padding: 8px 12px; font-size: 13px; color: var(--ink-3); text-decoration: underline; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   .ambient i { animation: none; }

@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { AppEnv, Env } from "./env";
 import { handoffLanes, type Lane } from "./escalation";
 import { SERVICE } from "../config/service";
+import { caseSheet, missingRequired, sanitize, type HearingAnswers } from "../hearing/hearing.ts";
+import { prefill } from "../hearing/prefill.ts";
 
 const LANE_LABEL: Record<Lane, string> = {
   gyosei: "行政書士（書類の作成・提出）",
@@ -21,7 +23,7 @@ escalations.post("/:id/request", async (c) => {
   const user = c.get("user");
   if (!user) return c.json({ error: "unauthorized" }, 401);
   const body = (await c.req.json().catch(() => null)) as
-    | { consent?: boolean; name?: string; email?: string; phone?: string; note?: string }
+    | { consent?: boolean; name?: string; email?: string; phone?: string; note?: string; hearing?: unknown }
     | null;
   if (body?.consent !== true) return c.json({ error: "consent_required" }, 400);
   const name = body.name?.trim() ?? "";
@@ -42,15 +44,38 @@ escalations.post("/:id/request", async (c) => {
   if (!handoffLanes.includes(row.lane)) return c.json({ error: "no_handoff" }, 400);
   if (row.status === "requested") return c.json({ ok: true, status: "requested" });
 
+  // ヒアリングは行政書士への依頼だけ。送られていなければ、従来どおり連絡先だけで受ける
+  let hearing: HearingAnswers | null = null;
+  if (row.lane === "gyosei" && body.hearing !== undefined && body.hearing !== null) {
+    hearing = sanitize(body.hearing);
+    if (!hearing) return c.json({ error: "invalid_hearing" }, 400);
+    if (missingRequired(hearing).length) return c.json({ error: "hearing_incomplete" }, 400);
+  }
+
   const now = Date.now();
   await c.env.DB.prepare(
-    "UPDATE escalations SET status = 'requested', contact_name = ?, contact_email = ?, contact_phone = ?, note = ?, requested_at = ? WHERE id = ?",
+    "UPDATE escalations SET status = 'requested', contact_name = ?, contact_email = ?, contact_phone = ?, note = ?, hearing = ?, requested_at = ? WHERE id = ?",
   )
-    .bind(name, email || null, phone || null, note || null, now, row.id)
+    .bind(name, email || null, phone || null, note || null, hearing ? JSON.stringify(hearing) : null, now, row.id)
     .run();
 
   c.executionCtx.waitUntil(notifyRequest(c.env, row.id).catch((e) => console.error("escalation_notify_error", e)));
   return c.json({ ok: true, status: "requested" });
+});
+
+/** ヒアリングの初期値: 相談の文面から推した届出の種類と、すでに分かっている項目 */
+escalations.get("/:id/hearing", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  const row = await c.env.DB.prepare("SELECT conversation_id, lane FROM escalations WHERE id = ? AND user_id = ?")
+    .bind(c.req.param("id"), user.id)
+    .first<{ conversation_id: string; lane: Lane }>();
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.lane !== "gyosei") return c.json({ error: "no_hearing" }, 400);
+  const { results } = await c.env.DB.prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY created_at ASC")
+    .bind(row.conversation_id)
+    .all<{ content: string }>();
+  return c.json(prefill(results.map((r) => r.content)));
 });
 
 export const adminEscalations = new Hono<AppEnv>();
@@ -63,7 +88,7 @@ adminEscalations.get("/", async (c) => {
   const status = c.req.query("status");
   const { results } = await c.env.DB.prepare(
     `SELECT id, conversation_id AS conversationId, lane, reasons, question, status, contact_name AS name,
-            contact_email AS email, contact_phone AS phone, note, created_at AS createdAt, requested_at AS requestedAt
+            contact_email AS email, contact_phone AS phone, note, hearing, created_at AS createdAt, requested_at AS requestedAt
        FROM escalations ${status ? "WHERE status = ?" : ""} ORDER BY created_at DESC LIMIT 100`,
   )
     .bind(...(status ? [status] : []))
@@ -92,6 +117,7 @@ export async function caseCard(env: Env, id: string): Promise<{ subject: string;
     `電話: ${e.contact_phone ?? "（なし）"}`,
     `補足: ${e.note ?? "（なし）"}`,
     "",
+    ...(e.hearing ? [caseSheet(JSON.parse(String(e.hearing)) as HearingAnswers, Number(e.requested_at ?? Date.now())), ""] : []),
     "■ きっかけになった質問",
     String(e.question),
     "",
