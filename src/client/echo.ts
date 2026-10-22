@@ -4,10 +4,13 @@ import type { AnswerActions } from "./api";
 export function stripEchoes(text: string, a: AnswerActions): string {
   const labels = new Set([...a.buttons.map((b) => b.label), ...(a.question ? [a.question.text, ...a.question.options.map((o) => o.label)] : [])]);
   if (!labels.size) return text;
-  const bare = (line: string) => line.trim().replace(/^(?:[-*・•]|\d+[.)])\s*/, "").replace(/^[[「【(（]\s*|\s*[\]」】)）]$/g, "").trim();
+  const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const alt = [...labels].sort((a, b) => b.length - a.length).map(escape).join("|");
+  // 行の中身が、ボタン名・選択肢（括弧や箇条書きの記号、区切りを含む）だけでできていれば消す
+  const onlyLabels = new RegExp(`^(?:\\s*(?:[-*・•]|\\d+[.)])?\\s*[[「【(（]?\\s*(?:${alt})\\s*[\\]」】)）]?\\s*[、,/／|｜]?)+\\s*$`);
   return text
     .split("\n")
-    .filter((line) => !(line.trim() && labels.has(bare(line))))
+    .filter((line) => !(line.trim() && onlyLabels.test(line)))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
