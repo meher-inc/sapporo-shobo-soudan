@@ -443,6 +443,8 @@ test("home page carries search metadata without visible copy", async ({ page, re
 
 
 test("a request to draft a filing is answered as information and handed to a gyoseishoshi only with consent @local", async ({ page, request }) => {
+  // iPhone 版 WebKit の CI で、出現の動きの途中のチップが「動いている」と判定され続けて押せないことがあった。動きを止めて操作の流れを確かめる
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   const reply = await ask(page, "防火対象物使用開始届を作成してほしいです");
   const card = reply.getByTestId("handoff-card");
@@ -478,6 +480,8 @@ test("a request to draft a filing is answered as information and handed to a gyo
 });
 
 test("行政書士への依頼は、届出の種類ごとに一度で聞き、資料の持ち主に送る依頼文を作り、案件シートに入れる @local", async ({ page, request }) => {
+  // iPhone 版 WebKit の CI で、出現の動きの途中のチップが「動いている」と判定され続けて押せないことがあった。動きを止めて操作の流れを確かめる
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   const reply = await ask(page, "名古屋駅前のビルの7階に事務所を移転します。消防計画を作成してほしいです");
   await reply.getByTestId("handoff-card").getByTestId("handoff-open").click();
