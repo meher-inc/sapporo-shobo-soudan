@@ -616,7 +616,14 @@ function Handoff({ escalation, onOpen }: { escalation: EscalationRef; onOpen: (e
             ご依頼を受け付けました
           </span>
         ) : (
-          <button class="btn btn-primary rp" data-testid="handoff-open" onClick={() => onOpen(escalation)}>
+          <button
+            class="btn btn-primary rp"
+            data-testid="handoff-open"
+            onClick={() => {
+              trackClick("handoff", escalation.lane);
+              onOpen(escalation);
+            }}
+          >
             {copy.action}
           </button>
         ))}
@@ -624,21 +631,37 @@ function Handoff({ escalation, onOpen }: { escalation: EscalationRef; onOpen: (e
   );
 }
 
-// 回答の下のボタンと選択肢（LINE のように押すだけで進める）。いちばん新しい回答にだけ出す
+// 押された入口を数える（トドケデのツール・電話・専門家への依頼のどれに流れたか）。失敗しても画面には影響させない
+function trackClick(kind: "link" | "tel" | "handoff", label: string) {
+  try {
+    navigator.sendBeacon?.("/api/click", JSON.stringify({ kind, label }));
+  } catch {
+    /* 計測は best effort */
+  }
+}
+
+// 回答の下のボタンと選択肢（LINE のように押すだけで進める）。いちばん新しい回答にだけ出す。
+// トドケデのツールを大きく、消防署への電話は一番下に小さな文字で出す（119番だけは大きく）
 function AnswerActionsView({ actions, onReply }: { actions: AnswerActions; onReply: (text: string) => void }) {
+  const isBig = (b: AnswerActions["buttons"][number]) => b.kind === "link" || b.href === "tel:119";
+  const big = actions.buttons.filter(isBig);
+  const small = actions.buttons.filter((b) => !isBig(b));
   return (
     <div class="answer-actions" data-testid="answer-actions">
-      {actions.buttons.length > 0 && (
+      {big.length > 0 && (
         <div class="action-buttons">
-          {actions.buttons.map((b, i) => (
+          {big.map((b, i) => (
             <a
               key={b.href}
-              class={`action-btn glass rp${i === 0 && b.kind === "link" ? " primary" : ""}${b.kind === "tel" ? " tel" : ""}`}
+              class={`action-btn glass rp${i === 0 ? " primary" : ""}${b.kind === "tel" ? " tel" : ""}`}
               href={b.href}
               {...(b.kind === "link" ? { target: "_blank", rel: "noopener" } : {})}
               data-testid="action-button"
               style={{ animationDelay: `${0.05 + i * 0.06}s` }}
-              onClick={addRipple}
+              onClick={(e) => {
+                addRipple(e);
+                trackClick(b.kind, b.label);
+              }}
             >
               <span class="action-label">{b.label}</span>
               {b.sub && <span class="action-sub">{b.sub}</span>}
@@ -670,6 +693,12 @@ function AnswerActionsView({ actions, onReply }: { actions: AnswerActions; onRep
           </div>
         </div>
       )}
+      {small.map((b) => (
+        <a key={b.href} class="action-tel-link" href={b.href} data-testid="action-tel-link" onClick={() => trackClick("tel", b.label)}>
+          {b.label}
+          {b.sub ? `（${b.sub}）` : ""}
+        </a>
+      ))}
     </div>
   );
 }

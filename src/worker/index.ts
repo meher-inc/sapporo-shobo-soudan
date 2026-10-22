@@ -47,6 +47,17 @@ app.route("/api/conversations", conversations);
 app.route("/api/escalations", escalations);
 app.route("/api/admin/escalations", adminEscalations);
 app.route("/api/billing", billing);
+// 回答の下の入口が押された回数（どこに流れたかを測る）。本文は sendBeacon の JSON 文字列
+app.post("/api/click", async (c) => {
+  const body = (await c.req.text().then((t) => JSON.parse(t)).catch(() => null)) as { kind?: string; label?: string } | null;
+  const kind = body?.kind;
+  const label = typeof body?.label === "string" ? body.label.slice(0, 40) : "";
+  if (!kind || !["link", "tel", "handoff"].includes(kind) || !label) return c.json({ error: "bad_request" }, 400);
+  await c.env.DB.prepare("INSERT INTO action_clicks (id, kind, label, created_at) VALUES (?, ?, ?, ?)")
+    .bind(crypto.randomUUID(), kind, label, Date.now())
+    .run();
+  return c.body(null, 204);
+});
 app.route("/api/stripe/webhook", stripeWebhook);
 
 // Local E2E only: move the first consultation back past the former 24-hour free period,
