@@ -101,6 +101,7 @@ test("本文に書き出されたボタン名・選択肢の行は除き、ほ�
   const text = "使用開始届が必要です。\n\n下のボタンから作れます。\n\n[届出書類を作る]\n\n- 10人未満\n- わからない";
   assert.equal(stripEchoes(text, a), "使用開始届が必要です。\n\n下のボタンから作れます。");
   assert.equal(stripEchoes("10人未満なら不要です。", a), "10人未満なら不要です。");
+  assert.equal(stripEchoes("必要です。\n\n<br>\n\n<br/>", a), "必要です。");
   // 1行に並べて書かれた選択肢も消す
   assert.equal(stripEchoes("必要です。\n\n[10人未満] [わからない]", a), "必要です。");
   assert.equal(stripEchoes("必要です。\n10人未満／わからない", a), "必要です。");
