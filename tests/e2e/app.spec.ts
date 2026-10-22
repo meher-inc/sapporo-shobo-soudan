@@ -512,7 +512,9 @@ test("区が分かると、その区の消防署に電話するボタンを出�
   test.skip(!s, "消防署の一覧を持たない版（一般版）");
   await page.goto("/");
   const reply = await ask(page, `${s.ward}で飲食店を開店します。延べ面積は120㎡、収容人員は25人、2階建てでコンロを使います。`);
-  const tel = reply.getByTestId("action-button").filter({ hasText: `${s.name}に電話する` });
+  // 電話はトドケデのツールより目立たせない（ボタンではなく、一番下の小さな文字リンク）
+  await expect(reply.getByTestId("action-button").filter({ hasText: "電話" })).toHaveCount(0);
+  const tel = reply.getByTestId("action-tel-link").filter({ hasText: `${s.name}に電話する` });
   await expect(tel).toHaveAttribute("href", `tel:${s.tel.replace(/[^\d]/g, "")}`);
   await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を作る" })).toBeVisible();
 });
@@ -522,4 +524,11 @@ test("「その他」を押すと入力欄に移る @local", async ({ page }) =>
   const reply = await ask(page, "消防の手続を知りたい");
   await reply.getByTestId("quick-reply").filter({ hasText: "その他" }).click();
   await expect(page.getByTestId("composer-input")).toBeFocused();
+});
+
+test("回答の下の入口が押された回数を記録する @local", async ({ request }) => {
+  const ok = await request.post("/api/click", { data: JSON.stringify({ kind: "link", label: "届出書類を作る" }), headers: { "content-type": "text/plain" } });
+  expect(ok.status()).toBe(204);
+  const bad = await request.post("/api/click", { data: JSON.stringify({ kind: "other", label: "x" }), headers: { "content-type": "text/plain" } });
+  expect(bad.status()).toBe(400);
 });

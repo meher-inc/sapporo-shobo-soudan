@@ -128,3 +128,9 @@ test("書類作成のボタンは、条件がそろっていない相談でも�
     assert.ok(buildActions({ userTexts: [q], rules: null }).buttons.some((b) => b.label === "届出書類を作る"), q);
   assert.ok(!buildActions({ userTexts: ["是正命令が来ました"], rules: null, lane: "bengoshi" }).buttons.some((b) => b.kind === "link"));
 });
+
+test("作成ツールのボタンがある回答は、作成が先・消防署の確認が後の順で締めくくらせる", () => {
+  const note = actionsNote({ buttons: [{ kind: "link", label: "届出書類を作る", href: DOCS_URL }] });
+  assert.match(note, /作成が先・消防署での確認が後/);
+  assert.match(note, /消防署の電話番号は書かないでください/);
+});

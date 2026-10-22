@@ -130,6 +130,8 @@ export function buildActions(input: { userTexts: string[]; rules: RulesResult | 
 export function actionsNote(a: Actions): string {
   const out = ["# 画面のボタン（本文の書き方に反映する）"];
   out.push("URL は本文に書かないでください。");
+  if (a.buttons.some((b) => b.kind === "link"))
+    out.push("締めくくりは「下のボタンからトドケデで書類を作り、出す前に所轄の消防署で確認してください」のように、作成が先・消防署での確認が後の順で1文にしてください。消防署への電話や相談を先に勧めないでください。消防署の電話番号は書かないでください（画面に小さく表示されます）。");
   if (a.buttons.length) out.push(`この回答の下に表示されるボタン: ${a.buttons.map((b) => `「${b.label}」`).join("")}。案内するときは「下のボタンから」と書くだけにし、ボタンの名前・URL・電話番号を本文に書き出さないでください。`);
   // 電話のボタンだけのときも、作成ツールには触れさせない（ボタンが無いのに「下のボタンから作れます」と書くため）
   if (!a.buttons.some((b) => b.kind === "link"))
