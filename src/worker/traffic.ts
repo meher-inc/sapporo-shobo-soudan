@@ -40,7 +40,9 @@ export function classifySource(url: URL, referer: string | undefined): string {
   } catch {
     return "direct";
   }
-  if (!host || host === url.hostname) return "direct";
+  // 同じサイトの検索流入用ページ（東京版の /soudan）から相談画面に来た人は seo
+  if (host === url.hostname) return /^\/soudan(\/|$)/.test(new URL(referer).pathname) ? "seo" : "direct";
+  if (!host) return "direct";
   if (host === "ai.todokede.jp") return "portal";
   for (const [re, name] of [...SEARCH, ...SNS]) if (re.test(host)) return name;
   if (host === "todokede.jp" || host.endsWith(".todokede.jp")) return `todokede:${host.replace(/\.?todokede\.jp$/, "") || "hub"}`;

@@ -26,6 +26,7 @@ test("Referer がない・同じサイト・読めないときは direct", () =>
   assert.equal(classifySource(at(), undefined), "direct");
   assert.equal(classifySource(at(), "https://nagoya.todokede.jp/legal/terms"), "direct");
   assert.equal(classifySource(at(), "not a url"), "direct");
+  assert.equal(classifySource(at(), "https://nagoya.todokede.jp/soudan/inshokuten"), "seo");
 });
 
 test("TEST_EMAILS と ADMIN_EMAILS のアカウントは試験", () => {
