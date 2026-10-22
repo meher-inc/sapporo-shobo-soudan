@@ -16,6 +16,7 @@ import {
 } from "./api";
 import { SERVICE } from "../config/service";
 import { renderMarkdown } from "./markdown";
+import { stripEchoes } from "./echo";
 import { Sheet } from "./components/Sheet";
 import { BackIcon, ChatIcon, GoogleIcon, MenuIcon, PlusIcon, SendIcon, StopIcon, TrashIcon } from "./components/Icons";
 
@@ -277,7 +278,8 @@ export function App({ initialMe }: { initialMe: Me }) {
     if (streaming && m.id === lastBot?.id) return renderMarkdown(m.content);
     const cached = html.get(m.id + m.content.length);
     if (cached) return cached;
-    const out = renderMarkdown(m.content);
+    // 画面のボタン・選択肢と同じ文言を本文に重ねて出さない
+    const out = renderMarkdown(m.actions ? stripEchoes(m.content, m.actions) : m.content);
     html.set(m.id + m.content.length, out);
     return out;
   };

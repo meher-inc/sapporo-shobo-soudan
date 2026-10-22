@@ -94,3 +94,11 @@ test("「わからない」と答えた項目は、もう一度聞かずに次�
   assert.equal(extractFacts(unknownText).total_area, undefined);
   assert.notEqual(act(["飲食店です。", unknownText]).question?.text, first.text);
 });
+
+test("本文に書き出されたボタン名・選択肢の行は除き、ほかの文は残す", async () => {
+  const { stripEchoes } = await import("../../src/client/echo.ts");
+  const a = { buttons: [{ kind: "link" as const, label: "届出書類を作る", href: DOCS_URL }], question: { text: "何人？", options: [{ label: "10人未満", text: "x" }, { label: "わからない", text: "y" }] } };
+  const text = "使用開始届が必要です。\n\n下のボタンから作れます。\n\n[届出書類を作る]\n\n- 10人未満\n- わからない";
+  assert.equal(stripEchoes(text, a), "使用開始届が必要です。\n\n下のボタンから作れます。");
+  assert.equal(stripEchoes("10人未満なら不要です。", a), "10人未満なら不要です。");
+});

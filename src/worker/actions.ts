@@ -132,10 +132,11 @@ export function buildActions(input: { userTexts: string[]; rules: RulesResult | 
 export function actionsNote(a: Actions): string {
   const out = ["# 画面のボタン（本文の書き方に反映する）"];
   out.push("URL は本文に書かないでください。トドケデの作成ツールや消防署の電話は、回答の下にボタンで表示されます。");
-  if (a.buttons.length) out.push(`この回答の下に表示されるボタン: ${a.buttons.map((b) => `「${b.label}」`).join("")}。案内するときは「下のボタンから」と書き、URL・電話番号は繰り返さないでください。`);
+  if (a.buttons.length) out.push(`この回答の下に表示されるボタン: ${a.buttons.map((b) => `「${b.label}」`).join("")}。案内するときは「下のボタンから」と書くだけにし、ボタンの名前・URL・電話番号を本文に書き出さないでください。`);
   if (a.question)
-    out.push(`この回答の下に「${a.question.text}」の選択肢（${a.question.options.map((o) => o.label).join("／")}）が表示されます。相談者への質問はこの1つだけにし、回答の最後に短く聞いてください。ほかの質問はしないでください。`);
+    out.push(`この回答の下に「${a.question.text}」の選択肢（${a.question.options.map((o) => o.label).join("／")}）が表示されます。相談者への質問はこの1つだけにし、回答の最後に1文で短く聞いてください。選択肢は画面に出るので、本文に並べないでください。ほかの質問はしないでください。`);
   else out.push("情報が足りないときの質問は1つだけにしてください。");
   out.push("むずかしい言葉は避け、中学生にも分かる言葉で、短く書いてください。");
   return out.join("\n");
 }
+
