@@ -147,3 +147,14 @@ test("作成ツールのボタンがある回答では「確認先：…」の�
   assert.equal(stripEchoes("必要です。\n確認先：京都市消防局公式サイト", doc), "必要です。");
   assert.equal(stripEchoes("必要です。\n確認先：京都市消防局公式サイト", { buttons: [] }), "必要です。\n確認先：京都市消防局公式サイト");
 });
+
+test("選択肢が出る回答では本文の質問を消し、作成ツールのボタンがあれば「最終的な判断は…」も消す", async () => {
+  const { stripEchoes } = await import("../../src/client/echo.ts");
+  const a = { buttons: [{ kind: "link" as const, label: "届出書類を作る", href: DOCS_URL }], question: { text: "何人いますか？", options: [{ label: "10人未満", text: "x" }] } };
+  const text = "使用開始届が必要です。\n\n正確な判断のため、延べ面積を教えてください。また、最大で何人いますか？最終的な判断は所轄の消防署が行います。\n\n下のボタンからトドケデで書類を作り、出す前に所轄の消防署で確認してください。";
+  assert.equal(stripEchoes(text, a), "使用開始届が必要です。\n\n下のボタンからトドケデで書類を作り、出す前に所轄の消防署で確認してください。");
+  // 箇条書きの記号は残し、質問の文だけを消す
+  assert.equal(stripEchoes("- 消火器：必要です。階数は何階ですか？", a), "- 消火器：必要です。");
+  // 選択肢もボタンも無い回答では、質問を残す
+  assert.equal(stripEchoes("何人いますか？最終的な判断は所轄の消防署が行います。", { buttons: [] }), "何人いますか？最終的な判断は所轄の消防署が行います。");
+});
