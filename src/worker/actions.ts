@@ -38,7 +38,7 @@ const QUESTIONS: Record<string, { text: string; options: ReplyChip[] }> = {
   total_area: {
     text: "建物全体の広さ（延べ面積）は？",
     options: [
-      { label: "150㎡未満", text: "延べ面積は149㎡以下です。" },
+      { label: "150㎡未満", text: "延べ面積は150㎡未満です。" },
       { label: "150〜299㎡", text: "延べ面積は150㎡以上300㎡未満です。" },
       { label: "300〜499㎡", text: "延べ面積は300㎡以上500㎡未満です。" },
       { label: "500〜999㎡", text: "延べ面積は500㎡以上1000㎡未満です。" },
@@ -49,7 +49,7 @@ const QUESTIONS: Record<string, { text: string; options: ReplyChip[] }> = {
   capacity: {
     text: "お客さんと従業員、あわせて最大で何人いますか？",
     options: [
-      { label: "10人未満", text: "収容人員は9人以下です。" },
+      { label: "10人未満", text: "収容人員は10人未満です。" },
       { label: "10〜29人", text: "収容人員は10人以上30人未満です。" },
       { label: "30〜49人", text: "収容人員は30人以上50人未満です。" },
       { label: "50〜299人", text: "収容人員は50人以上300人未満です。" },

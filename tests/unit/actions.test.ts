@@ -134,3 +134,16 @@ test("作成ツールのボタンがある回答は、作成が先・消防署�
   assert.match(note, /作成が先・消防署での確認が後/);
   assert.match(note, /消防署の電話番号は書かないでください/);
 });
+
+test("「150㎡未満」「10人未満」は境目の手前として判定し、選択肢の文はそのまま自然な言い方にする", () => {
+  assert.equal(extractFacts("延べ面積は150㎡未満です。").total_area, 149);
+  assert.equal(extractFacts("収容人員は10人未満です。").capacity, 9);
+  assert.equal(extractFacts("延べ面積は150㎡です。").total_area, 150);
+});
+
+test("作成ツールのボタンがある回答では「確認先：…」の行を出さない", async () => {
+  const { stripEchoes } = await import("../../src/client/echo.ts");
+  const doc = { buttons: [{ kind: "link" as const, label: "届出書類を作る", href: DOCS_URL }] };
+  assert.equal(stripEchoes("必要です。\n確認先：京都市消防局公式サイト", doc), "必要です。");
+  assert.equal(stripEchoes("必要です。\n確認先：京都市消防局公式サイト", { buttons: [] }), "必要です。\n確認先：京都市消防局公式サイト");
+});
