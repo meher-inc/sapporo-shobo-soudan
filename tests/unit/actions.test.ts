@@ -106,3 +106,9 @@ test("本文に書き出されたボタン名・選択肢の行は除き、ほ�
   assert.equal(stripEchoes("必要です。\n\n[10人未満] [わからない]", a), "必要です。");
   assert.equal(stripEchoes("必要です。\n10人未満／わからない", a), "必要です。");
 });
+
+test("ボタンが出ない回答でも、本文に書かれた作成ツール名の行は消す", async () => {
+  const { stripEchoes } = await import("../../src/client/echo.ts");
+  assert.equal(stripEchoes("必要です。\n[トドケデ 書類作成] [トドケデ 消防計画]\n確認先は消防署です。"), "必要です。\n確認先は消防署です。");
+  assert.match(actionsNote({ buttons: [] }), /作成ツールの名前や URL を本文に書かないでください/);
+});
