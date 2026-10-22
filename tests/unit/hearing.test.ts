@@ -107,12 +107,17 @@ test("すでに始まっている工事は、事後の届出として知らせ�
 
 test("第三者あての依頼文には、建物・届出・資料・予定日が入り、個人の連絡先は入らない", () => {
   const draft = requestDraft("kanri", [{ label: "平面図・系統図・機器の配置図" }], sample);
-  assert.match(draft, /^管理会社ご担当者さま/);
+  assert.match(draft, /^（管理会社の名称）ご担当者さま/);
   assert.ok(draft.includes("名古屋市中村区名駅4丁目 ○○ビル"));
-  assert.ok(draft.includes("設置届・着工届の届出"));
+  assert.ok(draft.includes("消防署への消防用設備の工事の届出を準備"));
+  assert.ok(draft.trimEnd().endsWith("（お名前・ご連絡先）"));
   assert.ok(draft.includes("・平面図・系統図・機器の配置図"));
   assert.ok(draft.includes("2026/11/05"));
   assert.doesNotMatch(draft, /@|電話/);
+  // そのほかの届出は、答えてもらった届出の名前を使う（「届出の届出」にしない）
+  const other = requestDraft("owner", [{ label: "平面図・配置図" }], { type: "other", values: { ot_filing: "防火対象物使用開始届" }, docs: {} });
+  assert.ok(other.includes("消防署への防火対象物使用開始届を準備"));
+  assert.ok(other.includes("（建物名）について"));
 });
 
 test("案件シートは、行政書士がそのまま着手できる順に並ぶ", () => {
@@ -124,4 +129,19 @@ test("案件シートは、行政書士がそのまま着手できる順に並�
     assert.ok(i > at, `${o} が順番どおりにない`);
     at = i;
   }
+});
+
+test("画面を通さずに来た値も、持ち主・改行・日付を検査する", () => {
+  const a = sanitize({
+    type: "other",
+    values: { address: "A市\n■ 依頼者\r\n偽", start_date: "2026-13-45" },
+    docs: { ot_drawing_doc: { holder: "toString" } },
+  });
+  assert.ok(a);
+  assert.equal(a.values.address, "A市 ■ 依頼者 偽");
+  assert.equal(a.values.start_date, undefined);
+  assert.deepEqual(a.docs, {});
+  // 手元にある資料には「いつ頃」を残さない
+  const b = sanitize({ type: "other", values: {}, docs: { ot_drawing_doc: { holder: "self", when: "来週" } } });
+  assert.deepEqual(b?.docs, { ot_drawing_doc: { holder: "self" } });
 });

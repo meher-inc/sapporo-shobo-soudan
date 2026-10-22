@@ -301,8 +301,8 @@ textarea { font: inherit; }
 
 /* 行政書士に依頼する前のヒアリング（届出の種類 → 建物と時期 → 資料の持ち主） */
 .hearing h2 { font-size: 19px; margin: 2px 0 6px; }
-.hearing-step { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: .02em; }
-.hearing-lead { margin: 0 0 14px; font-size: 13.5px; line-height: 1.7; color: var(--ink-2); }
+.sheet .hearing-step { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: .02em; }
+.sheet .hearing-lead { margin: 0 0 14px; font-size: 13.5px; line-height: 1.7; color: var(--ink-2); }
 .hearing-types { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .hearing-type {
   display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 16px;
@@ -325,6 +325,7 @@ textarea { font: inherit; }
 }
 .hearing-field input:focus, .hearing-when:focus { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .hearing-when { margin-top: 8px; font-size: 16px; }
+.hearing-field input[type="date"] { -webkit-appearance: none; appearance: none; display: block; min-height: 44px; }
 .hearing-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .hearing-chip {
   min-height: 44px; padding: 8px 14px; border-radius: 999px; font-size: 14px; color: var(--ink-2);
@@ -338,7 +339,7 @@ textarea { font: inherit; }
 .hearing-draft { margin: 4px 0 14px; padding: 12px 14px; border-radius: 16px; animation: msgIn .55s var(--spring) both; }
 .hearing-draft-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .hearing-draft-head strong { font-size: 13.5px; }
-.hearing-copy { min-height: 36px; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent-line); }
+.hearing-copy { min-height: 44px; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent-line); }
 .hearing-draft pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 13px; line-height: 1.7; color: var(--ink-2); }
 .hearing-nav { display: flex; gap: 8px; }
 .hearing-nav .btn-ghost { flex: 0 0 34%; }

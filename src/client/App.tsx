@@ -244,6 +244,11 @@ export function App({ initialMe }: { initialMe: Me }) {
       flash("ご依頼を受け付けました。担当からご連絡します。");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "";
+      if (code === "hearing_incomplete" || code === "invalid_hearing") {
+        setHearingDone(false);
+        flash("所在地と予定日をご確認ください。");
+        return;
+      }
       flash(
         code === "invalid_email"
           ? "メールアドレスの形式をご確認ください。"
@@ -474,7 +479,7 @@ export function App({ initialMe }: { initialMe: Me }) {
             />
           ) : (
           <form class="stagger handoff-form" onSubmit={submitHandoff}>
-            {handoff.lane === "gyosei" && <p class="hearing-step">4 / 4 ・ ご連絡先</p>}
+            {handoff.lane === "gyosei" && hearing && <p class="hearing-step">4 / 4 ・ ご連絡先</p>}
             <h2>{HANDOFF[handoff.lane].action}</h2>
             <p>ご連絡先をお知らせください。担当からご連絡し、内容と費用をご案内します。</p>
             <label>
@@ -528,7 +533,7 @@ export function App({ initialMe }: { initialMe: Me }) {
                 onChange={(e) => setHandoffForm({ ...handoffForm, consent: (e.target as HTMLInputElement).checked })}
               />
               <span>
-                この相談のやり取りを、MeHer株式会社を通じて提携の
+                この相談のやり取り{handoff.lane === "gyosei" && hearing ? "とご回答の内容" : ""}を、MeHer株式会社を通じて提携の
                 {handoff.lane === "gyosei" ? "行政書士" : "消防設備士・点検業者"}
                 に共有することに同意します。ご依頼の契約と費用は、提携先とお客様の間で決めます。
               </span>
@@ -544,7 +549,7 @@ export function App({ initialMe }: { initialMe: Me }) {
             <p class="terms">メールアドレスか電話番号のどちらかをご入力ください。</p>
             {handoff.lane === "gyosei" && (
               <button type="button" class="hearing-skip" onClick={() => setHearingDone(false)}>
-                ヒアリングに戻る
+                前の質問に戻る
               </button>
             )}
           </form>

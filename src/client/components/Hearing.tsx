@@ -30,7 +30,8 @@ interface Props {
  * 顧客以外が持っている資料は、その相手に送る依頼文の下書きをその場で出す。
  */
 export function Hearing({ escalationId, value, onChange, onDone }: Props) {
-  const [step, setStep] = useState<Step>("type");
+  // 連絡先の画面から戻ったときは、最後の資料の画面から続ける
+  const [step, setStep] = useState<Step>(value ? "docs" : "type");
   const [loading, setLoading] = useState(value === null);
   const a = value ?? { type: "other" as HearingType, values: {}, docs: {} };
 
@@ -49,23 +50,29 @@ export function Hearing({ escalationId, value, onChange, onDone }: Props) {
   const sections = sectionsOf(a.type);
   const factSections = sections.map((s) => ({ ...s, items: s.items.filter((i) => i.kind !== "doc") })).filter((s) => s.items.length);
   const docItems = sections.flatMap((s) => s.items.filter((i) => i.kind === "doc"));
-  const missing = factSections.flatMap((s) => s.items).filter((i) => i.required && !a.values[i.id]);
+  const missing = factSections.flatMap((s) => s.items).filter((i) => i.required && !a.values[i.id]?.trim());
   const summary = useMemo(() => summarize(a, Date.now()), [a]);
 
   const setValue = (id: string, v: string) => onChange({ ...a, values: { ...a.values, [id]: v } });
-  const setHolder = (id: string, holder: Holder) => onChange({ ...a, docs: { ...a.docs, [id]: { ...a.docs[id], holder } } });
+  const setHolder = (id: string, holder: Holder) =>
+    onChange({ ...a, docs: { ...a.docs, [id]: THIRD_PARTY.includes(holder) ? { ...a.docs[id], holder } : { holder } } });
   const setWhen = (id: string, when: string) => onChange({ ...a, docs: { ...a.docs, [id]: { ...a.docs[id], when } } });
   const go = (s: Step) => {
-    setStep(s);
-    document.querySelector(".sheet")?.scrollTo({ top: 0 });
+    const run = () => {
+      setStep(s);
+      document.querySelector(".sheet")?.scrollTo({ top: 0 });
+    };
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => void };
+    if (doc.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) doc.startViewTransition(run);
+    else run();
   };
 
   const stepNo = { type: 1, items: 2, docs: 3 }[step];
 
   return (
-    <div class="hearing stagger" data-testid="hearing" data-step={step}>
+    <div class="hearing stagger" data-testid="hearing" data-step={step} key={step}>
       <p class="hearing-step">
-        {stepNo} / 4 ・ {step === "type" ? "届出の種類" : step === "items" ? "建物と時期" : "資料"}
+        {stepNo} / 4 ・ {step === "type" ? "届出の種類" : step === "items" ? "建物と届出の内容" : "資料"}
       </p>
 
       {step === "type" && (
@@ -84,7 +91,7 @@ export function Hearing({ escalationId, value, onChange, onDone }: Props) {
                   class={`hearing-type glass${a.type === d.type ? " on" : ""}`}
                   data-testid="hearing-type"
                   data-type={d.type}
-                  onClick={() => onChange({ ...a, type: d.type, docs: {} })}
+                  onClick={() => d.type !== a.type && onChange({ ...a, type: d.type, docs: {} })}
                 >
                   <strong>{d.label}</strong>
                   <span>{d.sub}</span>
@@ -103,6 +110,7 @@ export function Hearing({ escalationId, value, onChange, onDone }: Props) {
 
       {step === "items" && (
         <>
+          <h2>建物と届出の内容を教えてください</h2>
           {factSections.map((s) => (
             <fieldset class="hearing-section">
               <legend>{s.title}</legend>

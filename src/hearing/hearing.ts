@@ -44,6 +44,8 @@ export interface HearingDef {
   label: string;
   /** 種類を選ぶ画面での補足 */
   sub: string;
+  /** 第三者あての依頼文で使う言い方（例：「消防計画の届出」） */
+  purpose: string;
   sections: readonly Section[];
 }
 
@@ -53,26 +55,26 @@ export const UNKNOWN = "分からない";
 const COMMON_HEAD: Section = {
   title: "建物と時期",
   items: [
-    { id: "address", label: "所在地・建物名", kind: "text", required: true, placeholder: "例：名古屋市中村区名駅4丁目 ○○ビル" },
-    { id: "station", label: "所轄の消防署（分かれば）", kind: "text", placeholder: "例：中村消防署" },
+    { id: "address", label: "所在地・建物名", kind: "text", required: true, placeholder: "例：○○市○○区○○町1-2 ○○ビル" },
+    { id: "station", label: "所轄の消防署（分かれば）", kind: "text", placeholder: "例：○○消防署" },
     { id: "use", label: "用途・業種", kind: "text", placeholder: "例：飲食店、事務所、介護施設" },
     { id: "total_area", label: "建物の延べ面積", kind: "text", placeholder: "例：1,200㎡" },
     { id: "floors", label: "階数", kind: "text", placeholder: "例：地上5階・地下1階" },
     { id: "mixed", label: "建物の使われ方", kind: "choice", options: ["自社だけで使う建物", "テナントが入る建物（複合用途）", UNKNOWN] },
-    { id: "trigger", label: "きっかけ", kind: "choice", options: ["開業・移転", "改装・工事", "消防署の立入検査で指摘", "管理会社・貸主から求められた", "社内の点検・監査", "その他"] },
+    { id: "trigger", label: "きっかけ", kind: "choice", options: ["開業・移転", "改装・工事", "消防署の立入検査で指摘", "管理会社・貸主から求められた", "社内の点検・監査", "そのほか"] },
     { id: "start_date", label: "工事日・使用開始日・オープン日", kind: "date", required: true },
     { id: "started", label: "工事や使用はもう始まっていますか", kind: "choice", options: ["まだ", "もう始まっている"] },
     { id: "fd_deadline", label: "消防署から期限を言われていますか", kind: "choice", options: ["言われていない", "言われている"] },
-    { id: "fd_consulted", label: "消防署に相談しましたか", kind: "choice", options: ["まだ", "相談した（担当者名を補足に）"] },
+    { id: "fd_consulted", label: "消防署に相談しましたか", kind: "choice", options: ["まだ", "相談した"], hint: "相談した場合は、担当者名を次の画面の補足欄に書いてください。" },
   ],
 };
 
 const COMMON_TAIL: Section = {
   title: "届出者と請求先",
   items: [
-    { id: "requester", label: "ご依頼者の立場", kind: "choice", options: ["建物の所有者", "テナント（入居者）", "管理会社", "設計・施工の会社", "設備業者", "その他"] },
+    { id: "requester", label: "ご依頼者の立場", kind: "choice", options: ["建物の所有者", "テナント（入居者）", "管理会社", "設計・施工の会社", "設備業者", "そのほか"] },
     { id: "filer", label: "届出者になる方（法人名・代表者）", kind: "text", placeholder: "例：株式会社○○ 代表取締役 ○○", hint: "届出書に名前が載る方です。ご依頼者と違うことがあります。" },
-    { id: "billing", label: "請求先", kind: "choice", options: ["届出者と同じ", "届出者と違う（補足に会社名）"] },
+    { id: "billing", label: "請求先", kind: "choice", options: ["届出者と同じ", "届出者と違う"], hint: "違う場合は、請求先の会社名を次の画面の補足欄に書いてください。" },
   ],
 };
 
@@ -81,6 +83,7 @@ const DEFS: readonly HearingDef[] = [
     type: "tenant_plan",
     label: "消防計画（テナント・事務所の移転）",
     sub: "ビルの一部を借りて使う場合",
+    purpose: "消防計画の届出",
     sections: [
       {
         title: "使う区画",
@@ -110,6 +113,7 @@ const DEFS: readonly HearingDef[] = [
     type: "building_plan",
     label: "消防計画（建物全体・統括防火管理）",
     sub: "テナントが入る建物の全体、または自社の建物全体",
+    purpose: "消防計画の届出",
     sections: [
       {
         title: "体制",
@@ -138,6 +142,7 @@ const DEFS: readonly HearingDef[] = [
     type: "equipment_work",
     label: "設置届・着工届（消防用設備の工事）",
     sub: "消火器・誘導灯・自動火災報知設備などの設置や更新",
+    purpose: "消防用設備の工事の届出",
     sections: [
       {
         title: "工事",
@@ -170,14 +175,15 @@ const DEFS: readonly HearingDef[] = [
     type: "booth",
     label: "可動式ブースの特例適用申請",
     sub: "個室ブース・電話ボックスの設置",
+    purpose: "特例適用の申請",
     sections: [
       {
         title: "設置先と使い方",
         items: [
           { id: "bo_count", label: "設置する台数と設置予定日", kind: "text", placeholder: "例：3台、12月10日" },
           { id: "bo_floor", label: "設置する階と、その階の在籍人数", kind: "text", placeholder: "例：5階、60人" },
-          { id: "bo_equip", label: "その階の消防設備", kind: "choice", options: ["スプリンクラーがある", "スプリンクラーはない", UNKNOWN], hint: "自動火災報知設備・非常放送・排煙の有無も補足に書いてください。" },
-          { id: "bo_usage", label: "ブースの使い方", kind: "choice", options: ["会議・電話", "仮眠など寝る使い方もある", "その他"] },
+          { id: "bo_equip", label: "その階の消防設備", kind: "choice", options: ["スプリンクラーがある", "スプリンクラーはない", UNKNOWN], hint: "自動火災報知設備・非常放送・排煙の有無は、次の画面の補足欄に書いてください。" },
+          { id: "bo_usage", label: "ブースの使い方", kind: "choice", options: ["会議・電話", "仮眠など寝る使い方もある", "そのほか"] },
           { id: "bo_fire", label: "ブースの中で火気を使いますか", kind: "choice", options: ["使わない", "使う", UNKNOWN], hint: "電気ケトルや電子レンジなど、電気で加熱する機器も「使う」に入ります。" },
           { id: "bo_fixed", label: "床や壁に固定しますか", kind: "choice", options: ["固定しない", "固定する", UNKNOWN] },
         ],
@@ -195,6 +201,7 @@ const DEFS: readonly HearingDef[] = [
     type: "other",
     label: "そのほかの届出",
     sub: "使用開始届・防火管理者選任届・危険物など",
+    purpose: "消防署への届出",
     sections: [
       {
         title: "内容",
@@ -256,10 +263,18 @@ export function guessType(text: string): HearingType {
 
 const MAX_VALUE = 300;
 
+/** 実在する日付（YYYY-MM-DD）だけを通す */
+export function isDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 /** 画面から来た回答を、定義にある項目と選択肢だけに絞る */
 export function sanitize(input: unknown): HearingAnswers | null {
   if (!input || typeof input !== "object") return null;
   const raw = input as { type?: unknown; values?: unknown; docs?: unknown };
+  const clean = (v: string, max: number) => v.replace(/[\r\n\t]+/g, " ").trim().slice(0, max);
   if (typeof raw.type !== "string" || !HEARING_TYPES.includes(raw.type as HearingType)) return null;
   const type = raw.type as HearingType;
   const values: Record<string, string> = {};
@@ -269,17 +284,17 @@ export function sanitize(input: unknown): HearingAnswers | null {
   for (const item of itemsOf(type)) {
     if (item.kind === "doc") {
       const d = dsrc[item.id] as { holder?: unknown; when?: unknown } | undefined;
-      if (!d || typeof d.holder !== "string" || !(d.holder in HOLDER_LABEL)) continue;
-      const when = typeof d.when === "string" ? d.when.trim().slice(0, 60) : "";
+      if (!d || typeof d.holder !== "string" || !Object.hasOwn(HOLDER_LABEL, d.holder)) continue;
+      const when = typeof d.when === "string" && THIRD_PARTY.includes(d.holder as Holder) ? clean(d.when, 60) : "";
       docs[item.id] = { holder: d.holder as Holder, ...(when ? { when } : {}) };
       continue;
     }
     const v = src[item.id];
     if (typeof v !== "string") continue;
-    const s = v.trim().slice(0, MAX_VALUE);
+    const s = clean(v, MAX_VALUE);
     if (!s) continue;
     if (item.kind === "choice" && !item.options?.includes(s)) continue;
-    if (item.kind === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(s)) continue;
+    if (item.kind === "date" && !isDate(s)) continue;
     values[item.id] = s;
   }
   return { type, values, docs };
@@ -354,20 +369,22 @@ export function summarize(a: HearingAnswers, now: number): HearingSummary {
 
 /** 顧客以外が持っている資料について、その相手に送る依頼文の下書き */
 export function requestDraft(holder: Holder, docs: { label: string }[], a: HearingAnswers): string {
-  const building = a.values.address ? `${a.values.address}` : "当該の建物";
-  const purpose = hearingDef(a.type).label.replace(/（.*）$/, "");
-  const deadline = a.values.start_date ? `${a.values.start_date.replace(/-/g, "/")}の予定に間に合わせるため、` : "";
-  const to = holder === "dept" ? "ご担当者さま" : `${HOLDER_LABEL[holder]}ご担当者さま`;
+  const building = a.values.address || "（建物名）";
+  const purpose = a.type === "other" && a.values.ot_filing ? a.values.ot_filing : hearingDef(a.type).purpose;
+  const to = holder === "dept" ? "（部署名）ご担当者さま" : `（${HOLDER_LABEL[holder]}の名称）ご担当者さま`;
+  const when = a.values.start_date ? `${a.values.start_date.replace(/-/g, "/")}に予定があるため、` : "";
   return [
     to,
     "",
-    `${building}について、消防署へ${purpose}の届出を準備しています。`,
-    `届出書の作成のため、次の資料をお送りいただけないでしょうか。`,
+    `${building}について、消防署への${purpose}を準備しています。`,
+    "準備のため、次の資料をお送りいただけないでしょうか。",
     "",
     ...docs.map((d) => `・${d.label}`),
     "",
-    `${deadline}お手数ですが、お持ちの範囲で構いませんので、ご都合のよい時期をお知らせください。`,
+    `${when}お持ちの範囲でお送りいただけますと助かります。お送りいただける時期の目安もお知らせください。`,
     "どうぞよろしくお願いいたします。",
+    "",
+    "（お名前・ご連絡先）",
   ].join("\n");
 }
 
