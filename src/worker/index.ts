@@ -8,6 +8,7 @@ import { chat, conversations } from "./chat";
 import { adminEscalations, escalations } from "./escalations";
 import { SERVICE } from "../config/service";
 import { withSharedSecrets } from "./secrets";
+import { markTestUser, rememberVisit } from "./traffic";
 
 const app = new Hono<AppEnv>();
 
@@ -25,6 +26,8 @@ app.use("*", async (c, next) => {
 
 app.use("*", async (c, next) => {
   c.set("user", c.req.path.startsWith("/api/stripe/") ? null : await loadUser(c));
+  // ?test=1 の端末から使われた利用者は試験に切り替える（相談件数から除く）
+  if (!c.req.path.startsWith("/api/stripe/")) await markTestUser(c, c.get("user"));
   await next();
   c.header("x-content-type-options", "nosniff");
   c.header("referrer-policy", "strict-origin-when-cross-origin");
@@ -93,6 +96,13 @@ app.post("/api/test/subscribe", async (c) => {
   return c.json({ ok: true });
 });
 
+// Local E2E only: the current user's traffic source and test flag (traffic.ts).
+app.get("/api/test/traffic", async (c) => {
+  const user = c.get("user");
+  if (c.env.E2E_MODE !== "1" || !isLocal(c.req.url) || !user) return c.notFound();
+  return c.json({ source: user.source, is_test: user.is_test });
+});
+
 app.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
 
 app.get("/robots.txt", (c) => {
@@ -133,6 +143,7 @@ function homeHead(origin: string) {
 
 // Inline the session state into the shell so the first paint needs no extra round trip.
 app.get("*", async (c) => {
+  rememberVisit(c);
   const asset = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url)));
   const html = await asset.text();
   const me = JSON.stringify(publicMe(c.get("user"), c.env)).replace(/</g, "\\u003c");

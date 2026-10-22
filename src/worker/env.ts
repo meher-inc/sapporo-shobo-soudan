@@ -21,6 +21,8 @@ export interface Env {
   USER_DAILY_MESSAGE_LIMIT?: string;
   /** 引き継ぎ一覧（/api/admin/escalations）を見られるアカウント（カンマ区切り） */
   ADMIN_EMAILS?: string;
+  /** 試験として相談件数から除くアカウント（カンマ区切り）。ADMIN_EMAILS も試験として扱う。src/worker/traffic.ts */
+  TEST_EMAILS?: string;
   /** 専門家への依頼の通知メール。どれかがなければ D1 に記録するだけ */
   EMAIL?: SendEmail;
   NOTIFY_FROM?: string;
@@ -40,6 +42,10 @@ export interface User {
   current_period_end: number | null;
   is_anonymous: number;
   ip_hash: string | null;
+  /** 最初に開いたときの流入元（traffic.ts の classifySource）。0006 より前の利用者は null */
+  source: string | null;
+  /** 1 = 試験の利用。相談件数から除く */
+  is_test: number;
   created_at: number;
 }
 
