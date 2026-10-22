@@ -110,5 +110,15 @@ test("本文に書き出されたボタン名・選択肢の行は除き、ほ�
 test("ボタンが出ない回答でも、本文に書かれた作成ツール名の行は消す", async () => {
   const { stripEchoes } = await import("../../src/client/echo.ts");
   assert.equal(stripEchoes("必要です。\n[トドケデ 書類作成] [トドケデ 消防計画]\n確認先は消防署です。"), "必要です。\n確認先は消防署です。");
-  assert.match(actionsNote({ buttons: [] }), /作成ツールの名前や URL を本文に書かないでください/);
+  assert.match(actionsNote({ buttons: [] }), /作成ツールには触れず/);
+});
+
+test("電話のボタンだけの回答では、作成ツールの案内を書かせず、本文からも消す", async () => {
+  const { stripEchoes } = await import("../../src/client/echo.ts");
+  const tel = { buttons: [{ kind: "tel" as const, label: "消防署に電話する", href: "tel:0" }] };
+  assert.match(actionsNote(tel), /作成ツールには触れず/);
+  assert.equal(stripEchoes("必要です。\n書類の作成をしたいときは、下のボタンからトドケデの作成ツールを利用できます。\n確認先は消防署です。", tel), "必要です。\n確認先は消防署です。");
+  const doc = { buttons: [{ kind: "link" as const, label: "届出書類を作る", href: "https://docs.todokede.jp/" }] };
+  assert.doesNotMatch(actionsNote(doc), /作成ツールには触れず/);
+  assert.equal(stripEchoes("下のボタンから作成ツールで作れます。", doc), "下のボタンから作成ツールで作れます。");
 });
