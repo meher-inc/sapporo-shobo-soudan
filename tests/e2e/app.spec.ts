@@ -491,7 +491,10 @@ test("行政書士への依頼は、届出の種類ごとに一度で聞き、�
   // 必須（所在地・予定日）が埋まるまで次へ進めない
   await expect(hearing.getByTestId("hearing-next")).toBeDisabled();
   await hearing.locator('[data-id="address"] input').fill("名古屋市中村区名駅4丁目 テストビル");
-  await hearing.locator('[data-id="start_date"] input').fill("2099-12-01");
+  const date = hearing.locator('[data-id="start_date"] input');
+  await date.fill("2099-12-01");
+  // 日付の欄からフォーカスを外す（iPhone 版 WebKit で、次の操作が進まないことがあった）
+  await date.blur();
   await hearing.locator('[data-id="tp_unified"]').getByTestId("hearing-option").filter({ hasText: "分からない" }).click();
   await expect(hearing.locator('[data-id="tp_unified"] [aria-checked="true"]')).toHaveText("分からない");
   await hearing.getByTestId("hearing-next").click();

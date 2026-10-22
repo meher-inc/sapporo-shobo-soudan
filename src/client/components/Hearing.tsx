@@ -57,14 +57,12 @@ export function Hearing({ escalationId, value, onChange, onDone }: Props) {
   const setHolder = (id: string, holder: Holder) =>
     onChange({ ...a, docs: { ...a.docs, [id]: THIRD_PARTY.includes(holder) ? { ...a.docs[id], holder } : { holder } } });
   const setWhen = (id: string, when: string) => onChange({ ...a, docs: { ...a.docs, [id]: { ...a.docs[id], when } } });
+  // 画面の切り替えは key={step} で作り直し、.stagger の出現アニメーションを毎回流す。
+  // View Transitions は使わない（CI の iPhone 版 WebKit で、切り替えが進まないことがあった）
   const go = (s: Step) => {
-    const run = () => {
-      setStep(s);
-      document.querySelector(".sheet")?.scrollTo({ top: 0 });
-    };
-    const doc = document as Document & { startViewTransition?: (cb: () => void) => void };
-    if (doc.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) doc.startViewTransition(run);
-    else run();
+    (document.activeElement as HTMLElement | null)?.blur();
+    setStep(s);
+    document.querySelector(".sheet")?.scrollTo({ top: 0 });
   };
 
   const stepNo = { type: 1, items: 2, docs: 3 }[step];
