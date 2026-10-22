@@ -88,9 +88,7 @@ export function findStation(texts: string[]) {
   return [...WARD_STATIONS].sort((a, b) => b.ward.length - a.ward.length).find((s) => t.includes(s.ward)) ?? null;
 }
 
-const DOC_WORDS = /届出|届け出|届|申請|書類|様式|選任|使用開始|設置届|点検結果|報告書/;
 const PLAN_WORDS = /消防計画|防火管理/;
-const MAKE_WORDS = /作り方|作成|書き方|書けば|自分で|作りたい|作る/;
 
 export function buildActions(input: { userTexts: string[]; rules: RulesResult | null; lane?: Lane | null; emergency?: boolean }): Actions {
   const { userTexts, rules, lane } = input;
@@ -101,10 +99,10 @@ export function buildActions(input: { userTexts: string[]; rules: RulesResult | 
 
   const buttons: ActionButton[] = [];
   const filings = rules?.filings.filter((f) => f.result !== "not_required") ?? [];
-  const fireManager = rules?.install.find((v) => v.equipment === "fire_manager" && v.result === "required");
-  const wantsMake = MAKE_WORDS.test(latest) || lane === "gyosei";
-  if (filings.length || (wantsMake && DOC_WORDS.test(latest)) || lane === "gyosei")
-    buttons.push({ kind: "link", label: "届出書類を作る", href: DOCS_URL, sub: "トドケデ 書類作成" });
+  // 防火管理者が必要か条件次第なら、消防計画のボタンも出す
+  const fireManager = rules?.install.find((v) => v.equipment === "fire_manager" && v.result !== "not_required");
+  // 書類作成のボタンは毎回出す（自分で作れる道を常に見せる。緊急時と弁護士の案内のときは上で返している）
+  buttons.push({ kind: "link", label: "届出書類を作る", href: DOCS_URL, sub: "トドケデ 書類作成" });
   if (fireManager || PLAN_WORDS.test(latest))
     buttons.push({ kind: "link", label: "消防計画を作る", href: PLAN_URL, sub: "トドケデ 消防計画" });
   const station = findStation(userTexts);

@@ -122,3 +122,9 @@ test("電話のボタンだけの回答では、作成ツールの案内を書�
   assert.doesNotMatch(actionsNote(doc), /作成ツールには触れず/);
   assert.equal(stripEchoes("下のボタンから作成ツールで作れます。", doc), "下のボタンから作成ツールで作れます。");
 });
+
+test("書類作成のボタンは、条件がそろっていない相談でも毎回出す（緊急時と弁護士の案内は除く）", () => {
+  for (const q of ["消防の手続を知りたい", "防火管理者が必要な条件", "消防設備点検の頻度"])
+    assert.ok(buildActions({ userTexts: [q], rules: null }).buttons.some((b) => b.label === "届出書類を作る"), q);
+  assert.ok(!buildActions({ userTexts: ["是正命令が来ました"], rules: null, lane: "bengoshi" }).buttons.some((b) => b.kind === "link"));
+});
