@@ -19,11 +19,18 @@ export interface EscalationRef {
   status: "detected" | "requested";
 }
 
+/** 回答の下に出すボタン（作成ツール・電話）と、押すだけで答えられる選択肢。サーバーが決める（src/worker/actions.ts） */
+export interface AnswerActions {
+  buttons: { kind: "link" | "tel"; label: string; href: string; sub?: string }[];
+  question?: { text: string; options: { label: string; text: string }[] };
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   escalation?: EscalationRef;
+  actions?: AnswerActions;
 }
 
 export interface ConversationSummary {
@@ -59,6 +66,7 @@ export async function streamChat(
   onChunk: (text: string) => void,
   signal: AbortSignal,
   onEscalation?: (escalation: EscalationRef) => void,
+  onActions?: (actions: AnswerActions) => void,
 ): Promise<string> {
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -73,6 +81,8 @@ export async function streamChat(
   const id = res.headers.get("x-conversation-id") ?? "";
   const escalation = res.headers.get("x-escalation");
   if (escalation) onEscalation?.(JSON.parse(decodeURIComponent(escalation)) as EscalationRef);
+  const actions = res.headers.get("x-actions");
+  if (actions) onActions?.(JSON.parse(decodeURIComponent(actions)) as AnswerActions);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   for (;;) {

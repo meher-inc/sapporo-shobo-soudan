@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { WARD_STATIONS } from "../../src/worker/actions";
 import { SERVICE } from "../../src/config/service";
 
 const uniqueEmail = (tag: string) => `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.com`;
@@ -446,9 +447,8 @@ test("a request to draft a filing is answered as information and handed to a gyo
   const reply = await ask(page, "防火対象物使用開始届を作成してほしいです");
   const card = reply.getByTestId("handoff-card");
   await expect(card).toContainText("行政書士");
-  // 自分で作りたい人には、トドケデの作成ツールを案内する
-  await expect(card.getByTestId("handoff-diy").getByRole("link", { name: "トドケデ 書類作成" })).toHaveAttribute("href", "https://docs.todokede.jp/");
-  await expect(card.getByTestId("handoff-diy").getByRole("link", { name: "トドケデ 消防計画" })).toHaveAttribute("href", "https://plan.todokede.jp/");
+  // 自分で作りたい人には、トドケデの作成ツールを回答の下のボタンで案内する
+  await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を作る" })).toHaveAttribute("href", /^https:\/\/docs\.todokede\.jp\/\?utm_source=todokede_ai/);
   await card.getByTestId("handoff-open").click();
 
   const sheet = page.getByTestId("handoff-sheet");
@@ -485,4 +485,41 @@ test("hand-off requests need consent and the owner's session", async ({ request 
   expect([400, 401]).toContain(res.status());
   const admin = await request.get("/api/admin/escalations");
   expect(admin.status()).toBe(403);
+});
+
+// ---------------------------------------------------------------------------
+// 回答の下のボタンと選択肢（LINE のように押すだけで進める）
+
+test("用途が分からない相談には、押すだけで答えられる選択肢を出し、押すとその内容で続きを相談できる @local", async ({ page }) => {
+  await page.goto("/");
+  const first = await ask(page, "お店を始めるときの消防の手続を知りたい");
+  const quick = first.getByTestId("quick-replies");
+  await expect(quick).toContainText("建物は何に使いますか？");
+  await expect(quick.getByTestId("quick-reply")).toHaveCount(7);
+  // 指で押しやすい大きさ（出現のアニメーションが終わってから測る）
+  await expect.poll(async () => (await quick.getByTestId("quick-reply").first().boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await quick.getByTestId("quick-reply").filter({ hasText: "飲食店" }).click();
+  await expect(page.getByTestId("msg-user").last()).toHaveText("飲食店です。");
+  const second = page.getByTestId("msg-assistant").last();
+  await expect(second.getByTestId("quick-replies")).toBeVisible();
+  // 選択肢は最新の回答にだけ出す
+  await expect(page.getByTestId("msg-assistant").first().getByTestId("quick-replies")).toHaveCount(0);
+  await expect(second.getByTestId("quick-replies")).not.toContainText("建物は何に使いますか？");
+});
+
+test("区が分かると、その区の消防署に電話するボタンを出す @local", async ({ page }) => {
+  const s = WARD_STATIONS[0];
+  test.skip(!s, "消防署の一覧を持たない版（一般版）");
+  await page.goto("/");
+  const reply = await ask(page, `${s.ward}で飲食店を開店します。延べ面積は120㎡、収容人員は25人、2階建てでコンロを使います。`);
+  const tel = reply.getByTestId("action-button").filter({ hasText: `${s.name}に電話する` });
+  await expect(tel).toHaveAttribute("href", `tel:${s.tel.replace(/[^\d]/g, "")}`);
+  await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を作る" })).toBeVisible();
+});
+
+test("「その他」を押すと入力欄に移る @local", async ({ page }) => {
+  await page.goto("/");
+  const reply = await ask(page, "消防の手続を知りたい");
+  await reply.getByTestId("quick-reply").filter({ hasText: "その他" }).click();
+  await expect(page.getByTestId("composer-input")).toBeFocused();
 });

@@ -14,5 +14,5 @@
     "isolatedModules": true
   },
   "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"],
-  "exclude": ["tests/unit"]
+  "exclude": ["tests/unit", "portal"]
 }
