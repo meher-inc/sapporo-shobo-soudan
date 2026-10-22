@@ -6,6 +6,12 @@
 |---|---|---|---|
 | ![](screenshots/1-skeleton.png) | ![](screenshots/2-home.png) | ![](screenshots/3-answer.png) | ![](screenshots/4-menu.png) |
 
+| ヒアリング（届出の種類） | ヒアリング（資料と依頼文） |
+|---|---|
+| ![](screenshots/5-hearing-type.png) | ![](screenshots/6-hearing-docs.png) |
+
+行政書士に依頼する前に、届出の種類ごとの項目を1つのシートで順に聞く（`src/hearing/hearing.ts`）。選ぶ項目はチップ、資料は持ち主をチップで選び、顧客以外が持つ資料にはその相手への依頼文をその場で出す。
+
 相談は無料になったため、課金シート（旧 `5-paywall.png`）はなくなりました。
 
 `pnpm screenshots` で撮り直せる（幅393px・2倍）。

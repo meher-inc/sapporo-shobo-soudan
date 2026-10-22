@@ -443,6 +443,8 @@ test("home page carries search metadata without visible copy", async ({ page, re
 
 
 test("a request to draft a filing is answered as information and handed to a gyoseishoshi only with consent @local", async ({ page, request }) => {
+  // iPhone 版 WebKit の CI で、出現の動きの途中のチップが「動いている」と判定され続けて押せないことがあった。動きを止めて操作の流れを確かめる
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   const reply = await ask(page, "防火対象物使用開始届を作成してほしいです");
   const card = reply.getByTestId("handoff-card");
@@ -453,6 +455,9 @@ test("a request to draft a filing is answered as information and handed to a gyo
 
   const sheet = page.getByTestId("handoff-sheet");
   await expect(sheet).toBeVisible();
+  // 行政書士への依頼は、まず届出の種類ごとのヒアリング。答えずに連絡先だけ送ることもできる
+  await expect(sheet.getByTestId("hearing")).toBeVisible();
+  await sheet.getByTestId("hearing-skip").click();
   await sheet.getByTestId("handoff-name").fill("テスト 太郎");
   const email = uniqueEmail("handoff");
   await sheet.getByTestId("handoff-email").fill(email);
@@ -472,6 +477,69 @@ test("a request to draft a filing is answered as information and handed to a gyo
   await page.getByTestId("menu-button").click();
   await page.getByTestId("history-item").first().click();
   await expect(page.getByTestId("handoff-done")).toBeVisible();
+});
+
+test("行政書士への依頼は、届出の種類ごとに一度で聞き、資料の持ち主に送る依頼文を作り、案件シートに入れる @local", async ({ page, request }) => {
+  // iPhone 版 WebKit の CI で、出現の動きの途中のチップが「動いている」と判定され続けて押せないことがあった。動きを止めて操作の流れを確かめる
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const reply = await ask(page, "名古屋駅前のビルの7階に事務所を移転します。消防計画を作成してほしいです");
+  await reply.getByTestId("handoff-card").getByTestId("handoff-open").click();
+  const sheet = page.getByTestId("handoff-sheet");
+  const hearing = sheet.getByTestId("hearing");
+
+  // 相談の文面から種類を推して選んでおく
+  await expect(hearing.locator('[data-testid="hearing-type"][data-type="tenant_plan"]')).toHaveAttribute("aria-checked", "true");
+  await hearing.getByTestId("hearing-next").click();
+
+  // 必須（所在地・予定日）が埋まるまで次へ進めない
+  await expect(hearing.getByTestId("hearing-next")).toBeDisabled();
+  await hearing.locator('[data-id="address"] input').fill("名古屋市中村区名駅4丁目 テストビル");
+  const date = hearing.locator('[data-id="start_date"] input');
+  await date.fill("2099-12-01");
+  // 日付の欄からフォーカスを外す（iPhone 版 WebKit で、次の操作が進まないことがあった）
+  await date.blur();
+  await hearing.locator('[data-id="tp_unified"]').getByTestId("hearing-option").filter({ hasText: "分からない" }).click();
+  await expect(hearing.locator('[data-id="tp_unified"] [aria-checked="true"]')).toHaveText("分からない");
+  await hearing.getByTestId("hearing-next").click();
+
+  // 資料の持ち主を選ぶと、その相手への依頼文がその場で出る
+  await expect(hearing).toHaveAttribute("data-step", "docs");
+  await hearing.locator('[data-testid="hearing-doc"][data-id="tp_plan_doc"] [data-holder="kanri"]').click();
+  await hearing.locator('[data-testid="hearing-doc"][data-id="tp_unified_doc"] [data-holder="kanri"]').click();
+  await hearing.locator('[data-testid="hearing-doc"][data-id="tp_prev_doc"] [data-holder="self"]').click();
+  const draft = hearing.locator('[data-testid="hearing-draft"][data-holder="kanri"]');
+  await expect(draft).toContainText("名古屋市中村区名駅4丁目 テストビル");
+  await expect(draft).toContainText("平面図・避難経路図");
+  await expect(draft).toContainText("統括防火管理者の氏名・連絡先");
+  await expect(hearing.getByTestId("hearing-draft")).toHaveCount(1);
+  // 393px でも横にはみ出さない
+  expect(await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await hearing.getByTestId("hearing-next").click();
+
+  await sheet.getByTestId("handoff-name").fill("テスト 花子");
+  const email = uniqueEmail("hearing");
+  await sheet.getByTestId("handoff-email").fill(email);
+  await sheet.getByTestId("handoff-consent").check();
+  await sheet.getByTestId("handoff-submit").click();
+  await expect(reply.getByTestId("handoff-done")).toBeVisible();
+
+  await request.get(`/auth/test-login?email=${encodeURIComponent("s.maru0714@gmail.com")}&next=/`);
+  const list = (await (await request.get("/api/admin/escalations?status=requested")).json()) as { escalations: { email: string; hearing: string | null }[] };
+  const saved = JSON.parse(list.escalations.find((e) => e.email === email)?.hearing ?? "null") as {
+    type: string;
+    values: Record<string, string>;
+    docs: Record<string, { holder: string }>;
+  } | null;
+  expect(saved?.type).toBe("tenant_plan");
+  expect(saved?.values.address).toBe("名古屋市中村区名駅4丁目 テストビル");
+  expect(saved?.values.tp_unified).toBe("分からない");
+  expect(saved?.docs.tp_plan_doc.holder).toBe("kanri");
+});
+
+test("ヒアリングの初期値は、本人の依頼でなければ返さない", async ({ request }) => {
+  const res = await request.get("/api/escalations/not-a-real-id/hearing");
+  expect([401, 404]).toContain(res.status());
 });
 
 test("a general question gets no hand-off card @local", async ({ page }) => {
