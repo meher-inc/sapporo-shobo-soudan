@@ -6,6 +6,7 @@ import { ASSISTANT_FALLBACK, SYSTEM_PROMPT } from "../config/prompt";
 import { runRules, rulesNote } from "../rules/extract.ts";
 import { detectEscalation, laneRules, type Lane } from "./escalation";
 import { actionsNote, buildActions, type Actions } from "./actions";
+import { recordError, recordLimit } from "./events";
 
 export const chat = new Hono<AppEnv>();
 
@@ -29,7 +30,10 @@ const STALLED_NOTE = "\n\n（回答の生成が途中で止まりました。も
  * Normalizes Workers AI SSE (legacy `response` or OpenAI-style `choices`) into plain text chunks.
  * Ends the reply if the upstream sends nothing for IDLE_TIMEOUT_MS, so a stalled model never hangs the client.
  */
-function textStream(source: ReadableStream<Uint8Array>, onDone: (full: string) => void): ReadableStream<Uint8Array> {
+function textStream(
+  source: ReadableStream<Uint8Array>,
+  onDone: (full: string, failure?: "timeout" | "fallback") => void,
+): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -37,13 +41,15 @@ function textStream(source: ReadableStream<Uint8Array>, onDone: (full: string) =
   let full = "";
 
   const finish = (controller: ReadableStreamDefaultController<Uint8Array>, note = "") => {
+    // 計測（error_shown）: 無応答の打ち切りは timeout、何も返らずフォールバック文になったら fallback
+    const failure = note === STALLED_NOTE ? "timeout" : full ? undefined : "fallback";
     const tail = full ? note : ASSISTANT_FALLBACK;
     if (tail) {
       full += tail;
       controller.enqueue(encoder.encode(tail));
     }
     controller.close();
-    onDone(full);
+    onDone(full, failure);
   };
 
   return new ReadableStream<Uint8Array>({
@@ -147,11 +153,20 @@ chat.post("/", async (c) => {
   // 相談は無料。セッションのない最初の送信で匿名の利用者を作る（同じ回線から24時間に作れる数に上限あり）。
   // 1人あたりの送信は日本時間の1日ごとに USER_DAILY_MESSAGE_LIMIT 件まで（caps.ts）。
   const user = c.get("user") ?? (await createAnonymousUser(c));
-  if (!user) return c.json({ error: "trial_limit" }, 429);
+  if (!user) {
+    recordLimit(c, "anon_ip");
+    return c.json({ error: "trial_limit" }, 429);
+  }
 
   const { success } = await c.env.CHAT_LIMITER.limit({ key: user.id });
-  if (!success) return c.json({ error: "rate_limited" }, 429);
-  if (!(await takeUserQuota(c.env, user.id))) return c.json({ error: "user_limit" }, 429);
+  if (!success) {
+    recordLimit(c, "rate", user.email);
+    return c.json({ error: "rate_limited" }, 429);
+  }
+  if (!(await takeUserQuota(c.env, user.id))) {
+    recordLimit(c, "daily", user.email);
+    return c.json({ error: "user_limit" }, 429);
+  }
 
   const db = c.env.DB;
   const now = Date.now();
@@ -206,18 +221,23 @@ chat.post("/", async (c) => {
     // Workers AI occasionally drops the upstream connection; one retry covers most of these.
     // 4006 is the daily quota, where retrying cannot help.
     console.error("ai_error_retry", first);
-    if (String(first).includes("4006")) return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
+    if (String(first).includes("4006")) {
+      recordError(c, "ai_error", user.email);
+      return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
+    }
     try {
       source = await runModel(c.env, messages, message, realAi, rules, detected?.lane, actions);
     } catch (err) {
       console.error("ai_error", err);
+      recordError(c, "ai_error", user.email);
       return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
     }
   }
 
   let resolveSaved: () => void;
   c.executionCtx.waitUntil(new Promise<void>((r) => (resolveSaved = r)));
-  const stream = textStream(source, (full) => {
+  const stream = textStream(source, (full, failure) => {
+    if (failure) recordError(c, failure === "timeout" ? "ai_timeout" : "ai_error", user.email);
     db.batch([
       db
         .prepare("INSERT INTO messages (id, conversation_id, role, content, escalation_id, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)")

@@ -8,7 +8,8 @@ import { chat, conversations } from "./chat";
 import { adminEscalations, escalations } from "./escalations";
 import { SERVICE } from "../config/service";
 import { withSharedSecrets } from "./secrets";
-import { markTestUser, rememberVisit } from "./traffic";
+import { isTestVisit, markTestUser, rememberVisit } from "./traffic";
+import { eventApi, eventTestApi, recordPageView } from "./events";
 
 const app = new Hono<AppEnv>();
 
@@ -56,11 +57,13 @@ app.post("/api/click", async (c) => {
   const kind = body?.kind;
   const label = typeof body?.label === "string" ? body.label.slice(0, 40) : "";
   if (!kind || !["link", "tel", "handoff"].includes(kind) || !label) return c.json({ error: "bad_request" }, 400);
-  await c.env.DB.prepare("INSERT INTO action_clicks (id, kind, label, created_at) VALUES (?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), kind, label, Date.now())
+  await c.env.DB.prepare("INSERT INTO action_clicks (id, kind, label, is_test, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(crypto.randomUUID(), kind, label, isTestVisit(c, c.get("user")?.email) ? 1 : 0, Date.now())
     .run();
   return c.body(null, 204);
 });
+// 計測のイベント（events.ts）。クライアントから送ってよいのは条件の選択肢を押したことだけ
+app.route("/api/event", eventApi);
 app.route("/api/stripe/webhook", stripeWebhook);
 
 // Local E2E only: move the first consultation back past the former 24-hour free period,
@@ -103,6 +106,9 @@ app.get("/api/test/traffic", async (c) => {
   return c.json({ source: user.source, is_test: user.is_test });
 });
 
+// Local E2E only: events の件数（events.ts）
+app.route("/api/test/events", eventTestApi);
+
 app.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
 
 app.get("/robots.txt", (c) => {
@@ -143,6 +149,7 @@ function homeHead(origin: string) {
 
 // Inline the session state into the shell so the first paint needs no extra round trip.
 app.get("*", async (c) => {
+  recordPageView(c);
   rememberVisit(c);
   const asset = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url)));
   const html = await asset.text();

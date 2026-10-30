@@ -17,6 +17,7 @@ import {
 import { SERVICE } from "../config/service";
 import { renderMarkdown } from "./markdown";
 import { stripEchoes } from "./echo";
+import { conditionProp, trackEvent } from "./events";
 import { Sheet } from "./components/Sheet";
 import { Hearing } from "./components/Hearing";
 import type { HearingAnswers } from "../hearing/hearing";
@@ -717,6 +718,8 @@ function AnswerActionsView({ actions, onReply }: { actions: AnswerActions; onRep
                 data-testid="quick-reply"
                 onClick={(e) => {
                   addRipple(e);
+                  const topic = actions.question?.topic;
+                  if (topic) trackEvent("condition_answered", conditionProp(topic, o));
                   onReply(o.text);
                 }}
               >

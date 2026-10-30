@@ -9,7 +9,8 @@ import type { Lane } from "./escalation.ts";
 export type ActionButton = { kind: "link" | "tel"; label: string; href: string; sub?: string };
 /** 押すとその文を送る選択肢。text が空のものは入力欄を開く（「その他」） */
 export type ReplyChip = { label: string; text: string };
-export type Actions = { buttons: ActionButton[]; question?: { text: string; options: ReplyChip[] } };
+/** question.topic は計測（condition_answered）の prop に使う質問の名前 */
+export type Actions = { buttons: ActionButton[]; question?: { topic: string; text: string; options: ReplyChip[] } };
 
 const UTM = "utm_source=todokede_ai&utm_medium=answer_button";
 export const DOCS_URL = `https://docs.todokede.jp/?${UTM}`;
@@ -113,12 +114,13 @@ export function buildActions(input: { userTexts: string[]; rules: RulesResult | 
   if (!rules?.facts.occupancy) missing.add("occupancy");
   const answered = userTexts.join("\n");
   const key = lane === "setsubi" ? undefined : ORDER.find((k) => missing.has(k) && !(TOPIC[k] && answered.includes(`${TOPIC[k]}はわかりません`)));
-  if (key) return { buttons, question: QUESTIONS[key] };
+  if (key) return { buttons, question: { topic: key, ...QUESTIONS[key] } };
   // 用途まで分かっていて区が分からないときは、提出先の消防署を決めるために区を聞く
   if (WARD_STATIONS.length && !station && (filings.length || rules?.install.length))
     return {
       buttons,
       question: {
+        topic: "ward",
         text: "建物はどの区にありますか？",
         options: WARD_STATIONS.map((s) => ({ label: s.ward, text: `建物は${s.ward}にあります。` })),
       },
