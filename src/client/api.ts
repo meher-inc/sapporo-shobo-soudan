@@ -23,7 +23,8 @@ export interface EscalationRef {
 /** 回答の下に出すボタン（作成ツール・電話）と、押すだけで答えられる選択肢。サーバーが決める（src/worker/actions.ts） */
 export interface AnswerActions {
   buttons: { kind: "link" | "tel"; label: string; href: string; sub?: string }[];
-  question?: { text: string; options: { label: string; text: string }[] };
+  /** topic は計測（condition_answered）に使う質問の名前 */
+  question?: { topic?: string; text: string; options: { label: string; text: string }[] };
 }
 
 export interface ChatMessage {

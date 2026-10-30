@@ -19,6 +19,12 @@ async function ask(page: Page, text: string) {
   return reply;
 }
 
+/** Local E2E only: events の件数（total）と試験の件数（test）。src/worker/events.ts */
+async function events(page: Page, name: string, prop?: string): Promise<{ total: number; test: number }> {
+  const q = new URLSearchParams({ name, ...(prop ? { prop } : {}) });
+  return (await page.request.get(`/api/test/events?${q}`)).json();
+}
+
 const testIp = () => `198.51.100.${Math.floor(Math.random() * 250)}-${Date.now()}`;
 
 test.beforeEach(async ({ page, context }) => {
@@ -220,6 +226,7 @@ test("streams a real Workers AI answer @local @real-ai", async ({ page, context 
 test("a stalled AI stream ends with a retry note instead of hanging @local", async ({ page }) => {
   test.skip(test.info().project.name !== "desktop-chrome", "server behaviour; one browser is enough");
   await page.goto("/");
+  const before = await events(page, "error_shown", "ai_timeout");
   await page.getByTestId("composer-input").fill("__stall__");
   await page.getByTestId("send-button").click();
   const reply = page.getByTestId("msg-assistant").first();
@@ -227,15 +234,19 @@ test("a stalled AI stream ends with a retry note instead of hanging @local", asy
   await expect(reply.getByRole("button", { name: "コピー" })).toBeVisible({ timeout: 45_000 });
   await expect(reply).toContainText("もう一度お試しください");
   await expect(page.getByTestId("send-button")).toHaveAttribute("aria-label", "送信");
+  // 打ち切りを error_shown（ai_timeout）として1行記録する
+  await expect.poll(async () => (await events(page, "error_shown", "ai_timeout")).total).toBe(before.total + 1);
 });
 
 test("the daily message limit stops sending with a notice @local", async ({ page }) => {
   await page.goto("/");
   await ask(page, "消火器は必要ですか");
   expect((await page.request.post("/api/test/fill-quota")).ok()).toBeTruthy();
+  const before = await events(page, "limit_reached", "daily");
   const res = await page.request.post("/api/chat", { data: { message: "もう1件" } });
   expect(res.status()).toBe(429);
   expect((await res.json()).error).toBe("user_limit");
+  await expect.poll(async () => (await events(page, "limit_reached", "daily")).total).toBe(before.total + 1);
   await page.getByTestId("composer-input").fill("上限を超えた質問");
   await page.getByTestId("send-button").click();
   await expect(page.getByTestId("toast")).toContainText("本日の相談回数の上限");
@@ -354,9 +365,11 @@ test("anonymous trials are limited per IP, then login is offered @local", async 
   }
   await page.context().setExtraHTTPHeaders({ "x-test-ip": ip });
   await page.goto("/");
+  const before = await events(page, "limit_reached", "anon_ip");
   await page.getByTestId("composer-input").fill("上限を超えた新しい端末");
   await page.getByTestId("send-button").click();
   await expect(page.getByTestId("login-sheet")).toBeVisible();
+  await expect.poll(async () => (await events(page, "limit_reached", "anon_ip")).total).toBe(before.total + 1);
   await expect(page.getByTestId("composer-input")).toHaveValue("上限を超えた新しい端末");
 });
 
@@ -566,8 +579,11 @@ test("用途が分からない相談には、押すだけで答えられる選�
   await expect(quick.getByTestId("quick-reply")).toHaveCount(7);
   // 指で押しやすい大きさ（出現のアニメーションが終わってから測る）
   await expect.poll(async () => (await quick.getByTestId("quick-reply").first().boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  const before = await events(page, "condition_answered", "occupancy");
   await quick.getByTestId("quick-reply").filter({ hasText: "飲食店" }).click();
   await expect(page.getByTestId("msg-user").last()).toHaveText("飲食店です。");
+  // 押した選択肢を condition_answered（質問の topic）として記録する
+  await expect.poll(async () => (await events(page, "condition_answered", "occupancy")).total).toBe(before.total + 1);
   const second = page.getByTestId("msg-assistant").last();
   await expect(second.getByTestId("quick-replies")).toBeVisible();
   // 選択肢は最新の回答にだけ出す
@@ -590,8 +606,10 @@ test("区が分かると、その区の消防署に電話するボタンを出�
 test("「その他」を押すと入力欄に移る @local", async ({ page }) => {
   await page.goto("/");
   const reply = await ask(page, "消防の手続を知りたい");
+  const before = await events(page, "condition_answered", "other:occupancy");
   await reply.getByTestId("quick-reply").filter({ hasText: "その他" }).click();
   await expect(page.getByTestId("composer-input")).toBeFocused();
+  await expect.poll(async () => (await events(page, "condition_answered", "other:occupancy")).total).toBe(before.total + 1);
 });
 
 test("回答の下の入口が押された回数を記録する @local", async ({ request }) => {
@@ -599,6 +617,35 @@ test("回答の下の入口が押された回数を記録する @local", async (
   expect(ok.status()).toBe(204);
   const bad = await request.post("/api/click", { data: JSON.stringify({ kind: "other", label: "x" }), headers: { "content-type": "text/plain" } });
   expect(bad.status()).toBe(400);
+});
+
+test("計測のイベントは許可した名前と形式の prop だけを受け付ける @local", async ({ request }) => {
+  const post = (body: unknown) => request.post("/api/event", { data: JSON.stringify(body), headers: { "content-type": "text/plain" } });
+  expect((await post({ name: "condition_answered", prop: "unknown:capacity" })).status()).toBe(204);
+  expect((await post({ name: "page_view", prop: "direct" })).status()).toBe(400);
+  expect((await post({ name: "condition_answered", prop: "foo" })).status()).toBe(400);
+  expect((await post({ name: "condition_answered", prop: "飲食店" })).status()).toBe(400);
+  expect((await post({ name: "condition_answered", prop: "x".repeat(61) })).status()).toBe(400);
+  expect((await request.post("/api/event", { data: "not json", headers: { "content-type": "text/plain" } })).status()).toBe(400);
+});
+
+test("ホームを開くと page_view を1行記録し、?test=1 の端末は試験として記録する @local", async ({ page }) => {
+  const before = await events(page, "page_view");
+  await page.goto("/?utm_source=e2e_check");
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  await expect.poll(async () => (await events(page, "page_view")).total).toBe(before.total + 1);
+  expect((await events(page, "page_view")).test).toBe(before.test);
+  expect((await events(page, "page_view", "e2e_check")).total).toBeGreaterThanOrEqual(1);
+  // 規約のページは数えない
+  await page.goto("/legal/terms");
+  await page.goto("/?test=1");
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  await expect.poll(async () => (await events(page, "page_view")).total).toBe(before.total + 2);
+  expect((await events(page, "page_view")).test).toBe(before.test + 1);
+  // ボットの User-Agent は数えない
+  expect((await page.request.get("/", { headers: { "user-agent": "Googlebot/2.1" } })).ok()).toBeTruthy();
+  await page.waitForTimeout(500);
+  expect((await events(page, "page_view")).total).toBe(before.total + 2);
 });
 
 test("流入元を最初の接触で記録し、?test=1 の端末は試験として数えない @local", async ({ page }) => {
