@@ -623,6 +623,7 @@ test("計測のイベントは許可した名前と形式の prop だけを受�
   const post = (body: unknown) => request.post("/api/event", { data: JSON.stringify(body), headers: { "content-type": "text/plain" } });
   expect((await post({ name: "condition_answered", prop: "unknown:capacity" })).status()).toBe(204);
   expect((await post({ name: "page_view", prop: "direct" })).status()).toBe(400);
+  expect((await post({ name: "condition_answered", prop: "foo" })).status()).toBe(400);
   expect((await post({ name: "condition_answered", prop: "飲食店" })).status()).toBe(400);
   expect((await post({ name: "condition_answered", prop: "x".repeat(61) })).status()).toBe(400);
   expect((await request.post("/api/event", { data: "not json", headers: { "content-type": "text/plain" } })).status()).toBe(400);

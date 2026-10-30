@@ -1,7 +1,7 @@
 // Run: node --experimental-strip-types --test tests/unit/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isBot, isClientEvent, isValidProp, pageViewProp } from "../../src/worker/events.ts";
+import { isAllowedClientProp, isBot, isClientEvent, isValidProp, pageViewProp } from "../../src/worker/events.ts";
 import { conditionProp } from "../../src/client/events.ts";
 import { buildActions } from "../../src/worker/actions.ts";
 
@@ -45,4 +45,11 @@ test("条件の選択肢には topic が付き、その prop は形式検査を�
   const a = buildActions({ userTexts: ["お店を始めるときの消防の手続を知りたい"], rules: null });
   assert.equal(a.question?.topic, "occupancy");
   for (const o of a.question!.options) assert.ok(isValidProp(conditionProp(a.question!.topic, o)), o.label);
+});
+
+test("クライアントから受ける prop は topic の許可リストだけ（接頭辞は unknown: と other:）", () => {
+  for (const topic of ["occupancy", "total_area", "capacity", "floors_above", "fire_use", "ward"])
+    for (const pre of ["", "unknown:", "other:"]) assert.ok(isAllowedClientProp(pre + topic), pre + topic);
+  for (const bad of ["foo", "unknown:foo", "other:", "unknown:other:ward", "Occupancy", "occupancy ", "direct", "search:google", "", null, 3])
+    assert.ok(!isAllowedClientProp(bad), String(bad));
 });

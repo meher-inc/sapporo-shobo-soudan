@@ -1,5 +1,5 @@
 // 計測のイベント（plan 11）。D1 の events に1行ずつ残す。外部の計測サービスには送らない。
-// - 誰の操作かは持たない。本文・連絡先・メール・IP は入れない（prop は英小文字・数字・_:.- の60文字以内）
+// - 誰の操作かは持たない。本文・連絡先・メール・IP は入れない（クライアントの prop は条件の topic の許可リストだけ）
 // - is_test は traffic.ts の isTestVisit で決める（?test=1 の端末と、TEST_EMAILS・ADMIN_EMAILS のアカウント）
 // - 記録の失敗で本来の応答を壊さない（waitUntil で非同期に書き、例外はログだけ）
 import { Hono, type Context } from "hono";
@@ -22,6 +22,14 @@ export function isValidProp(prop: unknown): prop is string {
   return typeof prop === "string" && PROP_RE.test(prop);
 }
 
+/** クライアントから受けてよい prop（条件の topic と、わからない・その他の接頭辞だけ） */
+const CLIENT_PROP_RE = /^(unknown:|other:)?(occupancy|total_area|capacity|floors_above|fire_use|ward)$/;
+const MAX_EVENT_BODY = 1024;
+
+export function isAllowedClientProp(prop: unknown): prop is string {
+  return typeof prop === "string" && CLIENT_PROP_RE.test(prop);
+}
+
 export function isClientEvent(name: unknown): name is EventName {
   return typeof name === "string" && (CLIENT_EVENTS as readonly string[]).includes(name);
 }
@@ -40,16 +48,20 @@ export function pageViewProp(path: string, source: string): string | null {
 
 /** イベントを1行書く。待たずに返り、失敗しても例外を投げない */
 export function recordEvent(c: Context<AppEnv>, name: EventName, prop: string | null, isTest: boolean): void {
-  const p = prop === null ? null : prop.slice(0, 60);
-  const write = c.env.DB.prepare("INSERT INTO events (id, name, prop, is_test, created_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), name, p !== null && isValidProp(p) ? p : null, isTest ? 1 : 0, Date.now())
-    .run()
-    .then(() => {})
-    .catch((err) => console.error("event_error", name, err));
   try {
-    c.executionCtx.waitUntil(write);
-  } catch {
-    // executionCtx がない環境では書き込みをそのまま走らせる
+    const p = prop === null ? null : prop.slice(0, 60);
+    const write = c.env.DB.prepare("INSERT INTO events (id, name, prop, is_test, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), name, p !== null && isValidProp(p) ? p : null, isTest ? 1 : 0, Date.now())
+      .run()
+      .then(() => {})
+      .catch((err) => console.error("event_error", name, err));
+    try {
+      c.executionCtx.waitUntil(write);
+    } catch {
+      // executionCtx がない環境では書き込みをそのまま走らせる
+    }
+  } catch (err) {
+    console.error("event_error", name, err);
   }
 }
 
@@ -83,8 +95,25 @@ export function recordPageView(c: Context<AppEnv>): void {
 /** POST /api/event（認証不要。/api/click と同じ扱い）。本文は sendBeacon の JSON 文字列 */
 export const eventApi = new Hono<AppEnv>();
 eventApi.post("/", async (c) => {
-  const body = (await c.req.text().then((t) => JSON.parse(t)).catch(() => null)) as { name?: unknown; prop?: unknown } | null;
-  if (!isClientEvent(body?.name) || !isValidProp(body?.prop)) return c.json({ error: "bad_request" }, 400);
+  const text = await c.req.text().catch(() => "");
+  if (new TextEncoder().encode(text).length > MAX_EVENT_BODY) return c.json({ error: "too_large" }, 413);
+  const body = (() => {
+    try {
+      return JSON.parse(text) as { name?: unknown; prop?: unknown } | null;
+    } catch {
+      return null;
+    }
+  })();
+  if (!isClientEvent(body?.name) || !isAllowedClientProp(body?.prop)) return c.json({ error: "bad_request" }, 400);
+  // 相談とは別の鍵（IP のハッシュ）で回数を制限する。超えたら記録しない
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`event:${c.req.header("cf-connecting-ip") ?? "unknown"}`));
+  const key = `event:${Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  try {
+    const { success } = await c.env.CHAT_LIMITER.limit({ key });
+    if (!success) return c.json({ error: "rate_limited" }, 429);
+  } catch (err) {
+    console.error("event_limit_error", err);
+  }
   recordEvent(c, body.name, body.prop, eventIsTest(c));
   return c.body(null, 204);
 });
