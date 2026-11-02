@@ -229,6 +229,8 @@ function Field({ item, value, onChange }: { item: Item; value: string; onChange:
         placeholder={item.placeholder}
         required={item.required}
         onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+        // iPhone の Safari は日付を選んだとき change だけを出すことがある。input だけだと「次へ」が押せないままになる
+        onChange={(e) => onChange((e.target as HTMLInputElement).value)}
       />
       {item.hint && <small>{item.hint}</small>}
     </label>
