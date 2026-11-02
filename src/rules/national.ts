@@ -8,6 +8,7 @@
 //                       消防法施行規則 第三十一条の三（工事が完了した日から四日以内、別記様式第一号の二の三）
 import { EQUIPMENT_LABEL, judge, occupancyIn, type Equipment, type Facts, type Verdict } from "./install.ts";
 import { v, type FilingFacts, type FilingVerdict, type Scene } from "./filing-base.ts";
+import { inspectionFilings } from "./inspection.ts";
 
 const TARGET = "所轄の消防長又は消防署長";
 
@@ -169,5 +170,6 @@ export function nationalFilings(scenes: Scene[], f: FilingFacts, install: Verdic
   if (scenes.includes("use_start") || asksFireManagement(latest)) out.push(...fireManagementFilings(f));
   const explicitWork = asksEquipmentWork(latest);
   if (f.occupancy && (explicitWork || scenes.includes("use_start") || scenes.includes("renovation"))) out.push(...equipmentWorkFilings(f, install, explicitWork, asked));
+  out.push(...inspectionFilings(f, latest));
   return out;
 }

@@ -4,6 +4,7 @@
 import { EQUIPMENT_LABEL, judge, type Equipment, type Facts, type Verdict } from "./install.ts";
 import { judgeFilings, type FilingFacts, type FilingVerdict, type Jurisdiction, type Scene } from "./filings.ts";
 import { asksEquipmentWork, asksFireManagement, nationalFilings } from "./national.ts";
+import { asksInspection } from "./inspection.ts";
 
 // 用途の言い換え → 令別表第一の項。曖昧なもの（診療所・老人ホームなど）は細分を決めずに入れない
 const OCCUPANCY_WORDS: [RegExp, string][] = [
@@ -203,7 +204,7 @@ export function runRules(jurisdiction: Jurisdiction, userTexts: string[]): Rules
   for (const t of userTexts) Object.assign(facts, Object.fromEntries(Object.entries(extractFacts(t)).filter(([, v]) => v !== undefined)));
   const latest = userTexts.at(-1) ?? "";
   const scenes = detectScenes(latest).length ? detectScenes(latest) : detectScenes(userTexts.join("\n"));
-  if (!facts.occupancy && !scenes.length && !asksFireManagement(latest) && !asksEquipmentWork(latest)) return null;
+  if (!facts.occupancy && !scenes.length && !asksFireManagement(latest) && !asksEquipmentWork(latest) && !asksInspection(latest)) return null;
   const asked = askedEquipment(latest);
   const j = (e: Equipment) => judge(e, facts as Facts, jurisdiction);
   const install = facts.occupancy
