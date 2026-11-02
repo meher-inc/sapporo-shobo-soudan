@@ -9,7 +9,7 @@
 // 届出書の作成・提出の代行は行政書士の業務（行政書士法第19条）なので lane は gyosei にする。
 
 import { EQUIPMENT_LABEL, judge, occupancyIn, type Equipment, type Facts } from "./install.ts";
-import { drillNational, hazmatGate, inUses, noProvision, SPECIFIC_KITCHEN_USES, v, type FilingFacts, type FilingVerdict, type Scene } from "./filing-base.ts";
+import { drillNational, hazmatGate, hazmatPermit, inUses, noProvision, SPECIFIC_KITCHEN_USES, v, type FilingFacts, type FilingVerdict, type Scene } from "./filing-base.ts";
 import { CITY_FILINGS, type CityJurisdiction } from "./cities/index.ts";
 
 export type { Facility, FilingFacts, FilingVerdict, Scene } from "./filing-base.ts";
@@ -402,6 +402,10 @@ export function generalFilings(scene: Scene, f: FilingFacts): FilingVerdict[] {
       ...x,
       caveats: [...x.caveats, "市町村の条例で、別に届出の期限や様式を定めている場合がある（確認済みの管轄では名古屋市・千葉市が3日前まで）"],
     }));
+  // 指定数量以上の危険物の許可は国の法令なので、条例の集計とは別に足す
+  if (scene === "small_hazmat" && f.hazmat_ratio !== undefined && f.hazmat_ratio >= 1) {
+    return [v({ procedure: "shoryo-kikenbutsu", title: "少量危険物等の貯蔵・取扱いの届出", target, result: "not_required", basis: "消防法 第十条・第十一条", reason: `指定数量の${f.hazmat_ratio}倍で指定数量以上。条例の届出ではなく、危険物施設として消防法の許可が要る` }), hazmatPermit(f.hazmat_ratio)];
+  }
   const per = VERIFIED.map((j) => judgeFilings(j, scene, f)[0]).filter((x): x is FilingVerdict => !!x);
   if (!per.length) return [];
   const n = per.length;

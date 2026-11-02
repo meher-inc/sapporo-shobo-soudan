@@ -10,6 +10,7 @@ import { SERVICE } from "../config/service";
 import { withSharedSecrets } from "./secrets";
 import { isTestVisit, markTestUser, rememberVisit } from "./traffic";
 import { eventApi, eventTestApi, recordPageView } from "./events";
+import { guide, publishedScenarios } from "./guide";
 
 const app = new Hono<AppEnv>();
 
@@ -111,6 +112,9 @@ app.route("/api/test/events", eventTestApi);
 
 app.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
 
+// 検索流入用の解説ページ（guide.ts）
+app.route("/", guide);
+
 app.get("/robots.txt", (c) => {
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
   return c.text(`User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /auth/\n\nSitemap: ${origin}/sitemap.xml\n`);
@@ -118,7 +122,9 @@ app.get("/robots.txt", (c) => {
 
 app.get("/sitemap.xml", (c) => {
   const origin = c.env.CANONICAL_ORIGIN ?? new URL(c.req.url).origin;
-  const urls = ["/", "/legal/terms", "/legal/privacy", "/legal/tokushoho"].map((p) => `<url><loc>${origin}${p}</loc></url>`).join("");
+  const urls = ["/", "/soudan", ...publishedScenarios().map((s) => `/soudan/${s.slug}`), "/legal/terms", "/legal/privacy", "/legal/tokushoho"]
+    .map((p) => `<url><loc>${origin}${p}</loc></url>`)
+    .join("");
   return c.body(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`, 200, {
     "content-type": "application/xml; charset=utf-8",
   });

@@ -8,6 +8,8 @@ export interface Env {
   RULES_ENABLED?: string;
   /** e.g. https://example.todokede.jp. Pages use it for canonical URLs; workers.dev redirects to it. */
   CANONICAL_ORIGIN?: string;
+  /** Search Console の所有権確認（google-site-verification の content）。/soudan のページに出す */
+  GSC_VERIFICATION?: string;
   STRIPE_API_BASE: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;

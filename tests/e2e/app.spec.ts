@@ -663,3 +663,21 @@ test("何もつけずに開いた利用者は direct として記録する @loca
   await ask(page, "消防の届出を知りたい");
   expect(await (await page.request.get("/api/test/traffic")).json()).toEqual({ source: "direct", is_test: 0 });
 });
+
+test("よくある相談のページ（/soudan）が開け、相談画面へ戻れる @local", async ({ page, request }) => {
+  const index = await page.goto("/soudan");
+  expect(index?.status()).toBe(200);
+  await expect(page.locator("h1")).toContainText("よくある相談");
+  await page.locator('a[href^="/soudan/"]').first().click();
+  await expect(page.locator("h1")).toBeVisible();
+  await expect(page.getByText("根拠: ").first()).toBeVisible();
+  const box = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  expect(box).toBe(true);
+  const cta = page.getByRole("link", { name: "条件を変えて相談する" });
+  await expect(cta).toHaveAttribute("href", /^\/\?utm_source=guide&utm_content=/);
+  await cta.click();
+  await expect(page).toHaveURL(/\/(\?.*)?$/);
+  const sitemap = await (await request.get("/sitemap.xml")).text();
+  expect(sitemap).toContain("/soudan/inshokuten-kaigyo-80");
+  expect((await request.get("/soudan/no-such-page", { maxRedirects: 0 })).status()).toBe(302);
+});

@@ -55,11 +55,32 @@ export const SPECIFIC_KITCHEN_USES = ["1", "2", "3", "4", "5イ", "6", "9イ", "
 
 export const inUses = (occupancy: string | undefined, list: string[]) => (occupancy ? occupancyIn(occupancy, list) : null);
 
+// 指定数量以上の危険物（消防法 第十条・第十一条。2026-11-02 e-Gov 法令API で条文本文を確認）
+export function hazmatPermit(ratio: number): FilingVerdict {
+  return v({
+    procedure: "kikenbutsu-kyoka",
+    title: "危険物製造所等の設置許可申請",
+    target: "市町村長（消防本部を置く市町村。それ以外は都道府県知事）",
+    result: "required",
+    deadline: "製造所・貯蔵所・取扱所を設置する前に許可を受け、完成検査に合格してから使う",
+    basis: "消防法 第十条第一項・第十一条第一項・第五項、危険物の規制に関する政令 別表第三",
+    reason: `指定数量の${ratio}倍で指定数量以上。許可を受けた製造所・貯蔵所・取扱所以外で貯蔵・取り扱ってはならない`,
+    caveats: [
+      "品名の違う危険物を同じ場所で扱うときは、それぞれの指定数量の倍数を足して判断する（消防法 第十条第二項）",
+      "10日以内の仮の貯蔵・取扱いは、消防長・消防署長の承認で足りる（消防法 第十条第一項ただし書）",
+      "位置・構造・設備を変えるときも許可が要る（消防法 第十一条第一項）",
+    ],
+  });
+}
+
 export function hazmatGate(f: FilingFacts, threshold: number | null, basis: string): FilingVerdict[] | null {
   if (f.hazmat_ratio === undefined) return null;
   const title = "少量危険物等の貯蔵・取扱いの届出";
   if (f.hazmat_ratio >= 1)
-    return [v({ procedure: "shoryo-kikenbutsu", title, target: "消防署長", result: "not_required", basis: "消防法 第十条・第十一条", reason: `指定数量の${f.hazmat_ratio}倍で指定数量以上。条例の届出ではなく、危険物施設として消防法の許可が要る` })];
+    return [
+      v({ procedure: "shoryo-kikenbutsu", title, target: "消防署長", result: "not_required", basis: "消防法 第十条・第十一条", reason: `指定数量の${f.hazmat_ratio}倍で指定数量以上。条例の届出ではなく、危険物施設として消防法の許可が要る` }),
+      hazmatPermit(f.hazmat_ratio),
+    ];
   if (threshold === null) {
     if (f.hazmat_ratio >= 0.5) return null;
     return [v({ procedure: "shoryo-kikenbutsu", title, target: "消防署長", result: "conditional", basis, reason: "個人の住居では、届出の対象になる量の下限が事業所と違う場合がある", missing: [] })];
