@@ -118,7 +118,7 @@ test("政令市の相談文から場面と数量を読み取る", () => {
 });
 
 test("条件が読み取れない相談では判定しない", () => {
-  assert.equal(runRules("tokyo-tfd", ["消火器の点検は何年ごとですか"]), null);
+  assert.equal(runRules("tokyo-tfd", ["消防のことで相談したいです"]), null);
 });
 
 test("判定メモに結論・期限・足りない情報が入る", () => {
