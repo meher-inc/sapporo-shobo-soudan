@@ -95,13 +95,9 @@ export function extractFacts(text: string): FilingFacts {
   if (/ダクトなし|ダクトはない|ダクトがない/.test(t)) f.has_duct = false;
   if (/家族だけ|自分たちだけ|個人的(に|な)?(使|利用)|自分で使う|プライベート/.test(t)) f.personal_use = true;
   if (/お客|客に|貸し出|有料|営業/.test(t) && f.personal_use === undefined) f.personal_use = false;
-  // 危険物の数量（リットル）→ 指定数量の倍数。指定数量: ガソリン200L、灯油・軽油1,000L、重油2,000L
-  const oil = t.match(/(ガソリン|灯油|軽油|重油)[^\d]{0,8}([\d,]+(?:\.\d+)?)\s*(?:L|ℓ|リットル)/i) ?? t.match(/([\d,]+(?:\.\d+)?)\s*(?:L|ℓ|リットル)の?(ガソリン|灯油|軽油|重油)/i);
-  if (oil) {
-    const [kind, amount] = /\d/.test(oil[1]) ? [oil[2], oil[1]] : [oil[1], oil[2]];
-    const unit = { ガソリン: 200, 灯油: 1000, 軽油: 1000, 重油: 2000 }[kind as "ガソリン"]!;
-    f.hazmat_ratio = Math.round((num(amount) / unit) * 1000) / 1000;
-  }
+  // 危険物の数量（リットル）→ 指定数量の倍数（危険物の規制に関する政令 別表第三）。品名の違う危険物は倍数を足す（消防法 第十条第二項）
+  const ratio = hazmatRatio(t);
+  if (ratio !== undefined) f.hazmat_ratio = ratio;
   if (/[2２二]つの区|複数の区|区をまたが|2以上の区/.test(t)) f.multi_ward = true;
   if (/準耐火建築物/.test(t)) f.building_class = "quasi_fireproof";
   else if (/耐火建築物/.test(t)) f.building_class = "fireproof";
@@ -115,11 +111,11 @@ export function extractFacts(text: string): FilingFacts {
 export function detectScenes(text: string): Scene[] {
   const t = text.normalize("NFKC");
   const s: Scene[] = [];
-  if (/使用開始|開業|開店|オープン|入居|使い始め|営業を始め|テナントに入/.test(t)) s.push("use_start");
+  if (/使用開始|開業|開店|開設|開所|開園|オープン|入居|使い始め|営業を始め|テナントに入/.test(t)) s.push("use_start");
   if (/模様替|改装|内装工事|改修|リフォーム|用途変更|間取り|増築/.test(t)) s.push("renovation");
   if (/ポップアップ|一時的|期間限定|短期間/.test(t) && !/展示場|観覧場/.test(t)) s.push("temp_use");
   if (/厨房設備|厨房機器|フライヤー|業務用コンロ|サウナ設備|サウナを設置|サウナを置|蓄電池|ボイラー|火気使用設備|火を使う設備/.test(t)) s.push("fire_equipment");
-  if (/少量危険物|指定可燃物|(灯油|ガソリン|軽油|重油)[^\d]{0,8}\d+\s*(L|ℓ|リットル)|\d+\s*(L|ℓ|リットル)の?(灯油|ガソリン|軽油|重油)/i.test(t)) s.push("small_hazmat");
+  if (/少量危険物|指定可燃物|危険物を?(貯蔵|保管|置|ため)|危険物を取り?扱/.test(t) || hazmatRatio(t) !== undefined) s.push("small_hazmat");
   if (/露店|屋台|出店/.test(t)) s.push("stall");
   if (/催し|催物|イベント|展示会|コンサート/.test(t) && !s.includes("stall")) s.push("event");
   if (/消防訓練|避難訓練|消火訓練|通報訓練/.test(t)) s.push("drill");
@@ -253,4 +249,36 @@ export function rulesNote(r: RulesResult): string {
     out.push("総務省令の除外・令第32条の特例はこの判定に含まれていません（条例の上乗せは、判定に入っている管轄だけ根拠欄に条例を示しています）。最終的な判断は所轄の消防署が行う旨は、締めくくりの一文（トドケデで作り、出す前に消防署で確認）に含めれば足ります。");
   }
   return out.join("\n");
+}
+
+// 危険物の規制に関する政令 別表第三の指定数量（リットル）。品名の判断が分かれる物（シンナー・潤滑油など）は入れない
+const HAZMAT_LITERS: [RegExp, number][] = [
+  [/ガソリン/, 200], // 第一石油類（非水溶性）
+  [/トルエン|ベンゼン/, 200], // 第一石油類（非水溶性）
+  [/アセトン/, 400], // 第一石油類（水溶性）
+  [/エタノール|メタノール|アルコール/, 400], // アルコール類
+  [/灯油|軽油|キシレン/, 1000], // 第二石油類（非水溶性）
+  [/重油/, 2000], // 第三石油類（非水溶性）
+  [/動植物油|食用油|サラダ油|天ぷら油|てんぷら油|揚げ油/, 10000], // 動植物油類
+];
+const CONTAINER_L: Record<string, number> = { ドラム缶: 200, 一斗缶: 18 };
+
+/** 文中の危険物の量を指定数量の倍数にして合計する。量が読めなければ undefined */
+export function hazmatRatio(text: string): number | undefined {
+  const t = text.normalize("NFKC").replace(/,/g, "");
+  const names = HAZMAT_LITERS.map(([re]) => re.source).join("|");
+  const amount = "(\\d+(?:\\.\\d+)?)\\s*(?:L|ℓ|リットル)";
+  const container = "(ドラム缶|一斗缶)\\s*(\\d+)\\s*(?:本|缶|個)";
+  const re = new RegExp(`(${names})[^\\d。、]{0,8}(?:${amount}|${container})|${amount}の?(${names})|(${names})の(ドラム缶|一斗缶)\\s*(\\d+)\\s*(?:本|缶|個)`, "gi");
+  let sum = 0;
+  let hit = false;
+  for (const m of t.matchAll(re)) {
+    const name = m[1] ?? m[6] ?? m[7];
+    const liters = m[2] ? Number(m[2]) : m[3] ? CONTAINER_L[m[3]] * Number(m[4]) : m[5] ? Number(m[5]) : CONTAINER_L[m[8]] * Number(m[9]);
+    const unit = HAZMAT_LITERS.find(([r]) => r.test(name))?.[1];
+    if (!unit || !Number.isFinite(liters)) continue;
+    sum += liters / unit;
+    hit = true;
+  }
+  return hit ? Math.round(sum * 1000) / 1000 : undefined;
 }
