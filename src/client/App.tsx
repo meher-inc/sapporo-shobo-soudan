@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   ApiError,
+  createRequest,
   deleteConversation,
   listConversations,
   loadConversation,
@@ -43,6 +44,20 @@ const HANDOFF = {
   },
 } as const;
 
+// 行政書士への依頼の近くに出す文（F-05・F-07・F-26。文言は todokede-corporate の 03_screens.md §1 と F-07）
+const GYOSEI_CONTRACT = "書類の作成・提出は行政書士が行います。ご契約・お支払いは行政書士と直接です。";
+const GYOSEI_TO_CONFIRM = "行政書士への依頼は、いただいた後に対応できるかを確認してご連絡します。";
+const GYOSEI_NONE = "この地域は、書類の作成を依頼できる行政書士をまだご案内できません。";
+const RECEIVER = SERVICE.gyoseiReceiver as "要確認" | "あり" | "なし";
+
+function GyoseiNotes() {
+  return (
+    <>
+      <p class="handoff-note" data-testid="handoff-contract">{GYOSEI_CONTRACT}</p>
+      {RECEIVER === "要確認" && <p class="handoff-note" data-testid="handoff-receiver">{GYOSEI_TO_CONFIRM}</p>}
+    </>
+  );
+}
 
 function withTransition(fn: () => void) {
   const doc = document as Document & { startViewTransition?: (cb: () => void) => void };
@@ -76,6 +91,7 @@ export function App({ initialMe }: { initialMe: Me }) {
   const [handoff, setHandoff] = useState<EscalationRef | null>(null);
   const [handoffForm, setHandoffForm] = useState({ name: "", email: "", phone: "", note: "", consent: false });
   const [handoffBusy, setHandoffBusy] = useState(false);
+  const [requestBusy, setRequestBusy] = useState(false);
   // 行政書士への依頼は、連絡先の前に届出の種類ごとのヒアリングをする（hearingDone で連絡先へ進む）
   const [hearing, setHearing] = useState<HearingAnswers | null>(null);
   const [hearingDone, setHearingDone] = useState(false);
@@ -233,6 +249,21 @@ export function App({ initialMe }: { initialMe: Me }) {
     setSheet("handoff");
   }
 
+  /** 回答の下の「行政書士に依頼する」: この会話の引き継ぎを作り、その回答の下に依頼カードを出して、依頼のシートを開く */
+  async function requestFromAnswer(messageId: string) {
+    if (!conversationId || requestBusy) return;
+    setRequestBusy(true);
+    try {
+      const ref = await createRequest(conversationId);
+      setMessages((m) => m.map((x) => (x.id === messageId || x.escalation?.id === ref.id ? { ...x, escalation: ref } : x)));
+      if (ref.status !== "requested") openHandoff(ref);
+    } catch {
+      flash("依頼の画面を開けませんでした。時間をおいてもう一度お試しください。");
+    } finally {
+      setRequestBusy(false);
+    }
+  }
+
   async function submitHandoff(e: Event) {
     e.preventDefault();
     if (!handoff) return;
@@ -368,6 +399,9 @@ export function App({ initialMe }: { initialMe: Me }) {
                   {!streaming && m.id === lastBot?.id && m.content && m.actions && (
                     <AnswerActionsView
                       actions={m.actions}
+                      // この回答にすでに行政書士の依頼カードがあれば、依頼のボタンは重ねない
+                      hideRequest={m.escalation?.lane === "gyosei"}
+                      onRequest={() => void requestFromAnswer(m.id)}
                       onReply={(text) => {
                         if (text) void send(text);
                         else textarea.current?.focus();
@@ -539,6 +573,7 @@ export function App({ initialMe }: { initialMe: Me }) {
                 に共有することに同意します。ご依頼の契約と費用は、提携先とお客様の間で決めます。
               </span>
             </label>
+            {handoff.lane === "gyosei" && <GyoseiNotes />}
             <button
               type="submit"
               class="btn btn-primary rp"
@@ -644,7 +679,9 @@ function Handoff({ escalation, onOpen }: { escalation: EscalationRef; onOpen: (e
     <div class={`handoff glass lane-${escalation.lane}`} data-testid="handoff-card">
       <strong>{copy.title}</strong>
       <p>{copy.body}</p>
+      {escalation.lane === "gyosei" && (RECEIVER === "なし" ? <p class="handoff-note">{GYOSEI_NONE}</p> : <GyoseiNotes />)}
       {copy.action &&
+        !(escalation.lane === "gyosei" && RECEIVER === "なし") &&
         (escalation.status === "requested" ? (
           <span class="handoff-done" data-testid="handoff-done">
             ご依頼を受け付けました
@@ -676,15 +713,45 @@ function trackClick(kind: "link" | "tel" | "handoff", label: string) {
 
 // 回答の下のボタンと選択肢（LINE のように押すだけで進める）。いちばん新しい回答にだけ出す。
 // トドケデのツールを大きく、消防署への電話は一番下に小さな文字で出す（119番だけは大きく）
-function AnswerActionsView({ actions, onReply }: { actions: AnswerActions; onReply: (text: string) => void }) {
-  const isBig = (b: AnswerActions["buttons"][number]) => b.kind === "link" || b.href === "tel:119";
-  const big = actions.buttons.filter(isBig);
+function AnswerActionsView({
+  actions,
+  onReply,
+  onRequest,
+  hideRequest,
+}: {
+  actions: AnswerActions;
+  onReply: (text: string) => void;
+  onRequest: () => void;
+  hideRequest?: boolean;
+}) {
+  const isBig = (b: AnswerActions["buttons"][number]) => b.kind === "link" || b.kind === "request" || b.href === "tel:119";
+  const big = actions.buttons.filter((b) => isBig(b) && !(hideRequest && b.kind === "request"));
   const small = actions.buttons.filter((b) => !isBig(b));
   return (
     <div class="answer-actions" data-testid="answer-actions">
       {big.length > 0 && (
         <div class="action-buttons">
-          {big.map((b, i) => (
+          {big.map((b, i) =>
+            b.kind === "request" ? (
+              <button
+                key="request"
+                type="button"
+                class={`action-btn glass rp${i === 0 ? " primary" : ""}`}
+                data-testid="action-request"
+                style={{ animationDelay: `${0.05 + i * 0.06}s` }}
+                onClick={(e) => {
+                  addRipple(e);
+                  trackClick("handoff", b.label);
+                  onRequest();
+                }}
+              >
+                <span class="action-label">{b.label}</span>
+                {b.sub && <span class="action-sub">{b.sub}</span>}
+                <span class="action-arrow" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            ) : (
             <a
               key={b.href}
               class={`action-btn glass rp${i === 0 ? " primary" : ""}${b.kind === "tel" ? " tel" : ""}`}
@@ -694,7 +761,7 @@ function AnswerActionsView({ actions, onReply }: { actions: AnswerActions; onRep
               style={{ animationDelay: `${0.05 + i * 0.06}s` }}
               onClick={(e) => {
                 addRipple(e);
-                trackClick(b.kind, b.label);
+                trackClick(b.kind === "tel" ? "tel" : "link", b.label);
               }}
             >
               <span class="action-label">{b.label}</span>
@@ -703,7 +770,8 @@ function AnswerActionsView({ actions, onReply }: { actions: AnswerActions; onRep
                 {b.kind === "tel" ? "☎" : "›"}
               </span>
             </a>
-          ))}
+            ),
+          )}
         </div>
       )}
       {actions.question && (

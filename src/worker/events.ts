@@ -7,7 +7,8 @@ import type { AppEnv } from "./env";
 import { getCookie } from "hono/cookie";
 import { TEST_COOKIE, classifySource, isTestEmail, isTestVisit } from "./traffic.ts";
 
-export const EVENT_NAMES = ["page_view", "limit_reached", "error_shown", "condition_answered"] as const;
+// request_clicked: 回答の下の「行政書士に依頼する」が押された（F-26。prop は answer_button。Worker が書く）
+export const EVENT_NAMES = ["page_view", "limit_reached", "error_shown", "condition_answered", "request_clicked"] as const;
 export type EventName = (typeof EVENT_NAMES)[number];
 /** クライアントから POST /api/event で送ってよいもの。ほかは Worker だけが書く */
 export const CLIENT_EVENTS: readonly EventName[] = ["condition_answered"];

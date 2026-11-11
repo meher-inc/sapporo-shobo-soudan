@@ -2,11 +2,14 @@
 // 文章のリンクを読ませず、押すだけで次に進めるようにする。中身はルール判定と相談文から機械的に決める（モデルに作らせない）。
 
 import { STATIONS } from "../config/stations.ts";
+import { SERVICE } from "../config/service.ts";
 import type { RulesResult } from "../rules/extract.ts";
 import type { Lane } from "./escalation.ts";
 
-/** 押すと開くボタン。kind=tel は電話をかける */
-export type ActionButton = { kind: "link" | "tel"; label: string; href: string; sub?: string };
+/** 押すと開くボタン。kind=tel は電話をかける。kind=request はその場で行政書士への依頼カードを開く（href は使わない） */
+export type ActionButton = { kind: "link" | "tel" | "request"; label: string; href: string; sub?: string };
+/** 書類の作成を依頼できる行政書士（受け手）の状態（service.ts の gyoseiReceiver） */
+export type GyoseiReceiver = "要確認" | "あり" | "なし";
 /** 押すとその文を送る選択肢。text が空のものは入力欄を開く（「その他」） */
 export type ReplyChip = { label: string; text: string };
 /** question.topic は計測（condition_answered）の prop に使う質問の名前 */
@@ -15,6 +18,9 @@ export type Actions = { buttons: ActionButton[]; question?: { topic: string; tex
 const UTM = "utm_source=todokede_ai&utm_medium=answer_button";
 export const DOCS_URL = `https://docs.todokede.jp/?${UTM}`;
 export const PLAN_URL = `https://plan.todokede.jp/?${UTM}`;
+/** 回答の下の「行政書士に依頼する」（F-26）。押すと POST /api/escalations で引き継ぎを作り、依頼カードを開く */
+export const REQUEST_LABEL = "行政書士に依頼する";
+export const DOCS_LABEL = "届出書類を自分で作る";
 
 // 「わからない」の文には項目名を入れる。同じ質問を繰り返さないために、答えられなかった項目をこの文で見分ける
 const unknown = (topic: string): ReplyChip => ({ label: "わからない", text: `${topic}はわかりません。調べ方を教えてください。` });
@@ -91,7 +97,14 @@ export function findStation(texts: string[]) {
 
 const PLAN_WORDS = /消防計画|防火管理/;
 
-export function buildActions(input: { userTexts: string[]; rules: RulesResult | null; lane?: Lane | null; emergency?: boolean }): Actions {
+export function buildActions(input: {
+  userTexts: string[];
+  rules: RulesResult | null;
+  lane?: Lane | null;
+  emergency?: boolean;
+  /** 省くと service.ts の gyoseiReceiver */
+  receiver?: GyoseiReceiver;
+}): Actions {
   const { userTexts, rules, lane } = input;
   const latest = (userTexts.at(-1) ?? "").normalize("NFKC");
   if (input.emergency) return { buttons: [{ kind: "tel", label: "119番に電話する", href: "tel:119" }] };
@@ -103,7 +116,10 @@ export function buildActions(input: { userTexts: string[]; rules: RulesResult | 
   // 防火管理者が必要か条件次第なら、消防計画のボタンも出す
   const fireManager = rules?.install.find((v) => v.equipment === "fire_manager" && v.result !== "not_required");
   // 書類作成のボタンは毎回出す（自分で作れる道を常に見せる。緊急時と弁護士の案内のときは上で返している）
-  buttons.push({ kind: "link", label: "届出書類を作る", href: DOCS_URL, sub: "トドケデ 書類作成" });
+  buttons.push({ kind: "link", label: DOCS_LABEL, href: DOCS_URL, sub: "トドケデ 書類作成" });
+  // 行政書士への依頼も毎回出す（F-26。Q-14）。この回答に行政書士の依頼カードが出ているとき（lane=gyosei）は重ねない。受け手が「なし」の地域では出さない（F-07）
+  const receiver = input.receiver ?? (SERVICE.gyoseiReceiver as GyoseiReceiver);
+  if (lane !== "gyosei" && receiver !== "なし") buttons.push({ kind: "request", label: REQUEST_LABEL, href: "", sub: "トドケデ提携の行政書士" });
   if (fireManager || PLAN_WORDS.test(latest))
     buttons.push({ kind: "link", label: "消防計画を作る", href: PLAN_URL, sub: "トドケデ 消防計画" });
   const station = findStation(userTexts);
@@ -135,6 +151,8 @@ export function actionsNote(a: Actions): string {
   if (a.buttons.some((b) => b.kind === "link"))
     out.push("締めくくりは「下のボタンからトドケデで書類を作り、出す前に所轄の消防署で確認してください」のように、作成が先・消防署での確認が後の順で1文にしてください。消防署への電話や相談を先に勧めないでください。消防署の電話番号は書かないでください（画面に小さく表示されます）。");
   if (a.buttons.length) out.push(`この回答の下に表示されるボタン: ${a.buttons.map((b) => `「${b.label}」`).join("")}。案内するときは「下のボタンから」と書くだけにし、ボタンの名前・URL・電話番号を本文に書き出さないでください。`);
+  if (a.buttons.some((b) => b.kind === "request"))
+    out.push("回答の下には、書類を自分で作るボタンと、行政書士に依頼するボタンの両方が出ます。依頼の料金・費用・報酬の額や目安は書かないでください。依頼について本文で触れる必要はありません（触れるときも「下のボタンから」と書くだけにします）。");
   // 電話のボタンだけのときも、作成ツールには触れさせない（ボタンが無いのに「下のボタンから作れます」と書くため）
   if (!a.buttons.some((b) => b.kind === "link"))
     out.push("この回答の下に作成ツールのボタンは出ません。作成ツールには触れず、名前・URL・「下のボタンから作れます」のような案内を書かないでください。");

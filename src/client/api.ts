@@ -22,7 +22,8 @@ export interface EscalationRef {
 
 /** 回答の下に出すボタン（作成ツール・電話）と、押すだけで答えられる選択肢。サーバーが決める（src/worker/actions.ts） */
 export interface AnswerActions {
-  buttons: { kind: "link" | "tel"; label: string; href: string; sub?: string }[];
+  /** kind=request は「行政書士に依頼する」（押すと依頼カードを開く。href は使わない） */
+  buttons: { kind: "link" | "tel" | "request"; label: string; href: string; sub?: string }[];
   /** topic は計測（condition_answered）に使う質問の名前 */
   question?: { topic?: string; text: string; options: { label: string; text: string }[] };
 }
@@ -143,6 +144,18 @@ export async function requestHandoff(id: string, body: HandoffRequest): Promise<
     const b = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ApiError(res.status, b.error ?? "request_failed");
   }
+}
+
+/** 回答の下の「行政書士に依頼する」。この会話の行政書士への引き継ぎを作る（同じ会話ではすでにあるものを返す） */
+export async function createRequest(conversationId: string): Promise<EscalationRef> {
+  const res = await fetch("/api/escalations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ conversationId }),
+  });
+  const b = (await res.json().catch(() => ({}))) as { escalation?: EscalationRef; error?: string };
+  if (!res.ok || !b.escalation) throw new ApiError(res.status, b.error ?? "request_failed");
+  return b.escalation;
 }
 
 export async function deleteConversation(id: string): Promise<void> {

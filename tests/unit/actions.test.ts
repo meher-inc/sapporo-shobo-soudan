@@ -1,7 +1,7 @@
 // Run: node --experimental-strip-types --test tests/unit/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildActions, actionsNote, findStation, DOCS_URL, PLAN_URL, WARD_STATIONS } from "../../src/worker/actions.ts";
+import { buildActions, actionsNote, findStation, DOCS_LABEL, DOCS_URL, PLAN_URL, REQUEST_LABEL, WARD_STATIONS } from "../../src/worker/actions.ts";
 import { extractFacts, runRules } from "../../src/rules/extract.ts";
 const STATIONS = WARD_STATIONS;
 
@@ -40,9 +40,9 @@ const WHERE = S ? `${S.ward}で` : "";
 test("届出がある相談には書類作成のボタン、防火管理者が要る相談には消防計画のボタンを出す", () => {
   const a = act([`${WHERE}飲食店を開店します。延べ面積は400㎡、収容人員は60人、2階建てでコンロを使います。`]);
   const labels = a.buttons.map((b) => b.label);
-  assert.ok(labels.includes("届出書類を作る"));
+  assert.ok(labels.includes("届出書類を自分で作る"));
   assert.ok(labels.includes("消防計画を作る"));
-  assert.equal(a.buttons.find((b) => b.label === "届出書類を作る")?.href, DOCS_URL);
+  assert.equal(a.buttons.find((b) => b.label === "届出書類を自分で作る")?.href, DOCS_URL);
   assert.equal(a.buttons.find((b) => b.label === "消防計画を作る")?.href, PLAN_URL);
   if (S) assert.ok(labels.includes(`${S.name}に電話する`));
 });
@@ -71,7 +71,7 @@ test("違反処理・紛争の相談にはボタンも選択肢も出さない�
 });
 
 test("行政書士への依頼では書類作成のボタンを出す", () => {
-  assert.ok(act(["防火管理者選任届の記入をお願いしたい"], "gyosei").buttons.some((b) => b.label === "届出書類を作る"));
+  assert.ok(act(["防火管理者選任届の記入をお願いしたい"], "gyosei").buttons.some((b) => b.label === "届出書類を自分で作る"));
 });
 
 test("緊急の相談には119番のボタンだけを出す", () => {
@@ -125,7 +125,7 @@ test("電話のボタンだけの回答では、作成ツールの案内を書�
 
 test("書類作成のボタンは、条件がそろっていない相談でも毎回出す（緊急時と弁護士の案内は除く）", () => {
   for (const q of ["消防の手続を知りたい", "防火管理者が必要な条件", "消防設備点検の頻度"])
-    assert.ok(buildActions({ userTexts: [q], rules: null }).buttons.some((b) => b.label === "届出書類を作る"), q);
+    assert.ok(buildActions({ userTexts: [q], rules: null }).buttons.some((b) => b.label === "届出書類を自分で作る"), q);
   assert.ok(!buildActions({ userTexts: ["是正命令が来ました"], rules: null, lane: "bengoshi" }).buttons.some((b) => b.kind === "link"));
 });
 
@@ -157,4 +157,59 @@ test("選択肢が出る回答では本文の質問を消し、作成ツール�
   assert.equal(stripEchoes("- 消火器：必要です。階数は何階ですか？", a), "- 消火器：必要です。");
   // 選択肢もボタンも無い回答では、質問を残す
   assert.equal(stripEchoes("何人いますか？最終的な判断は所轄の消防署が行います。", { buttons: [] }), "何人いますか？最終的な判断は所轄の消防署が行います。");
+});
+
+// ---------------------------------------------------------------------------
+// F-26（plan 20261111-city-request-button）: 回答の下に「自分で作る」と「行政書士に依頼する」を常に出す
+
+const kinds = (a: ReturnType<typeof buildActions>) => a.buttons.map((b) => `${b.kind}:${b.label}`);
+
+test("普通の相談の回答の下には、自分で作るボタンと行政書士に依頼するボタンを出す", () => {
+  for (const texts of [["消防の手続を知りたい"], ["飲食店を開店します。延べ面積は400㎡、収容人員は60人、2階建てでコンロを使います。"], ["消防設備点検の頻度"]]) {
+    const a = act(texts);
+    assert.equal(a.buttons[0].label, DOCS_LABEL, texts[0]);
+    assert.equal(a.buttons[0].href, DOCS_URL);
+    assert.ok(kinds(a).includes(`request:${REQUEST_LABEL}`), texts[0]);
+    assert.equal(a.buttons.filter((b) => b.kind === "request").length, 1);
+  }
+  // 消防計画のボタンは今の条件のまま（防火管理者が要る・条件次第のとき）
+  assert.ok(kinds(act(["飲食店を開店します。延べ面積は400㎡、収容人員は60人、2階建てでコンロを使います。"])).includes(`link:消防計画を作る`));
+  // 点検・工事の手配のカードが出る回答でも、行政書士への依頼のボタンは出す
+  assert.ok(kinds(act(["消火器の点検をお願いしたい"], "setsubi")).includes(`request:${REQUEST_LABEL}`));
+});
+
+test("緊急時（119番のみ）と弁護士の案内では、どちらのボタンも出さない", () => {
+  assert.deepEqual(buildActions({ userTexts: ["店が燃えています"], rules: null, emergency: true }).buttons.map((b) => b.label), ["119番に電話する"]);
+  assert.deepEqual(buildActions({ userTexts: ["是正命令が来ました"], rules: null, lane: "bengoshi" }).buttons, []);
+});
+
+test("その回答に行政書士の依頼カードがすでに出ているときは、依頼のボタンを重ねない", () => {
+  const a = act(["防火管理者選任届の記入をお願いしたい"], "gyosei");
+  assert.ok(kinds(a).includes(`link:${DOCS_LABEL}`));
+  assert.ok(!a.buttons.some((b) => b.kind === "request"));
+});
+
+test("受け手が「なし」の地域では依頼のボタンを出さず、「要確認」「あり」では出す。7サイトとも今は「要確認」", async () => {
+  const { SERVICE } = await import("../../src/config/service.ts");
+  assert.equal(SERVICE.gyoseiReceiver, "要確認");
+  const q = { userTexts: ["消防の手続を知りたい"], rules: null };
+  assert.ok(!buildActions({ ...q, receiver: "なし" }).buttons.some((b) => b.kind === "request"));
+  assert.ok(buildActions({ ...q, receiver: "あり" }).buttons.some((b) => b.kind === "request"));
+  assert.ok(buildActions({ ...q, receiver: "要確認" }).buttons.some((b) => b.kind === "request"));
+  assert.ok(buildActions({ ...q, receiver: "なし" }).buttons.some((b) => b.label === DOCS_LABEL));
+});
+
+test("依頼のボタンがある回答では、料金を書かせず、作成が先・消防署の確認が後の締めくくりはそのまま", () => {
+  const note = actionsNote(act(["消防の手続を知りたい"]));
+  assert.match(note, /行政書士に依頼するボタン/);
+  assert.match(note, /料金・費用・報酬の額や目安は書かないでください/);
+  assert.match(note, /作成が先・消防署での確認が後/);
+  assert.match(note, /ボタンの名前・URL・電話番号を本文に書き出さないでください/);
+  assert.doesNotMatch(actionsNote(act(["防火管理者選任届の記入をお願いしたい"], "gyosei")), /行政書士に依頼するボタン/);
+});
+
+test("本文に書き出された「行政書士に依頼する」「届出書類を自分で作る」の行は消す", async () => {
+  const { stripEchoes } = await import("../../src/client/echo.ts");
+  const a = act(["消防の手続を知りたい"]);
+  assert.equal(stripEchoes("必要です。\n\n[届出書類を自分で作る] [行政書士に依頼する]", a), "必要です。");
 });
