@@ -48,6 +48,8 @@ const HANDOFF = {
 const GYOSEI_CONTRACT = "書類の作成・提出は行政書士が行います。ご契約・お支払いは行政書士と直接です。";
 const GYOSEI_TO_CONFIRM = "行政書士への依頼は、いただいた後に対応できるかを確認してご連絡します。";
 const GYOSEI_NONE = "この地域は、書類の作成を依頼できる行政書士をまだご案内できません。";
+// 同じ相談の依頼を送信済みのとき（fixrules R2）
+const ALREADY_REQUESTED = "この相談はご依頼済みです。担当からご連絡します。";
 const RECEIVER = SERVICE.gyoseiReceiver as "要確認" | "あり" | "なし";
 
 function GyoseiNotes() {
@@ -249,14 +251,39 @@ export function App({ initialMe }: { initialMe: Me }) {
     setSheet("handoff");
   }
 
-  /** 回答の下の「行政書士に依頼する」: この会話の引き継ぎを作り、その回答の下に依頼カードを出して、依頼のシートを開く */
-  async function requestFromAnswer(messageId: string) {
+  /** 依頼の状態を、同じ引き継ぎのカードすべてに反映する */
+  function markRequested(id: string) {
+    setMessages((m) =>
+      m.map((x) => ({
+        ...x,
+        ...(x.escalation?.id === id ? { escalation: { ...x.escalation, status: "requested" as const } } : {}),
+        ...(x.request?.id === id ? { request: { ...x.request, status: "requested" as const } } : {}),
+      })),
+    );
+  }
+
+  /**
+   * 回答の下の「行政書士に依頼する」: この相談の行政書士への引き継ぎを作り（あればそれを使い）、その回答の下に依頼カードを出して、依頼のシートを開く。
+   * 点検・弁護士のカードはそのまま残す（request は escalation と別に持つ）。同じ依頼のカードがすでに出ていれば2枚目は出さない。送信済みならシートを開かない
+   */
+  async function requestFromAnswer(messageId: string, label: string) {
     if (!conversationId || requestBusy) return;
     setRequestBusy(true);
+    trackClick("handoff", label);
     try {
       const ref = await createRequest(conversationId);
-      setMessages((m) => m.map((x) => (x.id === messageId || x.escalation?.id === ref.id ? { ...x, escalation: ref } : x)));
-      if (ref.status !== "requested") openHandoff(ref);
+      setMessages((m) => {
+        const shown = m.some((x) => x.escalation?.id === ref.id || x.request?.id === ref.id);
+        return m.map((x) =>
+          x.escalation?.id === ref.id
+            ? { ...x, escalation: ref }
+            : x.request?.id === ref.id || (!shown && x.id === messageId)
+              ? { ...x, request: ref }
+              : x,
+        );
+      });
+      if (ref.status === "requested") flash(ALREADY_REQUESTED);
+      else openHandoff(ref);
     } catch {
       flash("依頼の画面を開けませんでした。時間をおいてもう一度お試しください。");
     } finally {
@@ -270,12 +297,17 @@ export function App({ initialMe }: { initialMe: Me }) {
     setHandoffBusy(true);
     try {
       await requestHandoff(handoff.id, { ...handoffForm, hearing: handoff.lane === "gyosei" ? hearing : null });
-      const id = handoff.id;
-      setMessages((m) => m.map((x) => (x.escalation?.id === id ? { ...x, escalation: { ...x.escalation, status: "requested" } } : x)));
+      markRequested(handoff.id);
       setSheet(null);
       flash("ご依頼を受け付けました。担当からご連絡します。");
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "";
+      if (code === "already_requested") {
+        markRequested(handoff.id);
+        setSheet(null);
+        flash(ALREADY_REQUESTED);
+        return;
+      }
       if (code === "hearing_incomplete" || code === "invalid_hearing") {
         setHearingDone(false);
         flash("所在地と予定日をご確認ください。");
@@ -396,12 +428,16 @@ export function App({ initialMe }: { initialMe: Me }) {
                   {!(streaming && m.id === lastBot?.id) && m.content && m.escalation && (
                     <Handoff escalation={m.escalation} onOpen={openHandoff} />
                   )}
+                  {!(streaming && m.id === lastBot?.id) && m.content && m.request && m.request.id !== m.escalation?.id && (
+                    <Handoff escalation={m.request} onOpen={openHandoff} />
+                  )}
                   {!streaming && m.id === lastBot?.id && m.content && m.actions && (
                     <AnswerActionsView
                       actions={m.actions}
                       // この回答にすでに行政書士の依頼カードがあれば、依頼のボタンは重ねない
-                      hideRequest={m.escalation?.lane === "gyosei"}
-                      onRequest={() => void requestFromAnswer(m.id)}
+                      hideRequest={m.escalation?.lane === "gyosei" || !!m.request}
+                      requestBusy={requestBusy}
+                      onRequest={(label) => void requestFromAnswer(m.id, label)}
                       onReply={(text) => {
                         if (text) void send(text);
                         else textarea.current?.focus();
@@ -718,11 +754,14 @@ function AnswerActionsView({
   onReply,
   onRequest,
   hideRequest,
+  requestBusy,
 }: {
   actions: AnswerActions;
   onReply: (text: string) => void;
-  onRequest: () => void;
+  onRequest: (label: string) => void;
   hideRequest?: boolean;
+  /** 依頼を作っている間は押せない（fixrules R3） */
+  requestBusy?: boolean;
 }) {
   const isBig = (b: AnswerActions["buttons"][number]) => b.kind === "link" || b.kind === "request" || b.href === "tel:119";
   const big = actions.buttons.filter((b) => isBig(b) && !(hideRequest && b.kind === "request"));
@@ -738,11 +777,12 @@ function AnswerActionsView({
                 type="button"
                 class={`action-btn glass rp${i === 0 ? " primary" : ""}`}
                 data-testid="action-request"
+                disabled={requestBusy}
+                aria-busy={requestBusy}
                 style={{ animationDelay: `${0.05 + i * 0.06}s` }}
                 onClick={(e) => {
                   addRipple(e);
-                  trackClick("handoff", b.label);
-                  onRequest();
+                  onRequest(b.label);
                 }}
               >
                 <span class="action-label">{b.label}</span>

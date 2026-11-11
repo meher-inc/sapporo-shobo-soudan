@@ -33,6 +33,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   escalation?: EscalationRef;
+  /** 回答の下の「行政書士に依頼する」で作った（使い回した）行政書士への引き継ぎ。escalation（点検・弁護士など）とは別に出す */
+  request?: EscalationRef;
   actions?: AnswerActions;
 }
 
@@ -105,15 +107,23 @@ export async function listConversations(): Promise<ConversationSummary[]> {
 export async function loadConversation(id: string): Promise<ChatMessage[]> {
   const res = await fetch(`/api/conversations/${id}`);
   if (!res.ok) throw new ApiError(res.status, "load_failed");
-  type Row = Omit<ChatMessage, "escalation"> & {
+  type Row = Omit<ChatMessage, "escalation" | "request"> & {
+    createdAt?: number;
     escalationId: string | null;
     escalationLane: EscalationLane | null;
     escalationStatus: EscalationRef["status"] | null;
+    requestEscalationId?: string | null;
+    requestEscalationLane?: EscalationLane | null;
+    requestEscalationStatus?: EscalationRef["status"] | null;
   };
   const { messages } = (await res.json()) as { messages: Row[] };
-  return messages.map(({ escalationId, escalationLane, escalationStatus, ...m }) => ({
+  return messages.map(({ createdAt: _c, escalationId, escalationLane, escalationStatus, requestEscalationId, requestEscalationLane, requestEscalationStatus, ...m }) => ({
     ...m,
     escalation: escalationId && escalationLane && escalationStatus ? { id: escalationId, lane: escalationLane, status: escalationStatus } : undefined,
+    request:
+      requestEscalationId && requestEscalationLane && requestEscalationStatus
+        ? { id: requestEscalationId, lane: requestEscalationLane, status: requestEscalationStatus }
+        : undefined,
   }));
 }
 

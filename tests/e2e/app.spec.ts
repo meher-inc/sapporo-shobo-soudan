@@ -611,6 +611,41 @@ test("緊急時と弁護士の案内の回答には「自分で作る」「行�
   await expect(lawyer.getByTestId("action-request")).toHaveCount(0);
 });
 
+test("点検・工事のカードが出た回答で依頼を押しても、両方のカードがその場でも開き直しても残る（F-26 fixrules R4） @local", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const reply = await ask(page, "消火器の点検をお願いしたい");
+  await expect(reply.locator(".handoff.lane-setsubi")).toHaveCount(1);
+  await reply.getByTestId("action-request").click();
+  await expect(page.getByTestId("handoff-sheet")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("handoff-sheet")).toHaveCount(0);
+  await expect(reply.locator(".handoff.lane-setsubi")).toHaveCount(1);
+  await expect(reply.locator(".handoff.lane-gyosei")).toHaveCount(1);
+  await expect(reply.getByTestId("action-request")).toHaveCount(0);
+  await page.reload();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("history-item").first().click();
+  const reopened = page.getByTestId("msg-assistant").last();
+  await expect(reopened.locator(".handoff.lane-setsubi")).toHaveCount(1);
+  await expect(reopened.locator(".handoff.lane-gyosei")).toHaveCount(1);
+});
+
+test("ログインした別の利用者は、他人の会話に依頼を作れない（F-26） @local", async ({ page, browser }) => {
+  await login(page, uniqueEmail("owner"));
+  await ask(page, "防火管理者は必要ですか？");
+  const conv = (await (await page.request.get("/api/conversations")).json()) as { conversations: { id: string }[] };
+  const id = conv.conversations[0].id;
+  const other = await browser.newContext({ extraHTTPHeaders: { "x-test-ip": testIp() } });
+  const p2 = await other.newPage();
+  await login(p2, uniqueEmail("other"));
+  const res = await p2.request.post("/api/escalations", { data: { conversationId: id } });
+  expect(res.status()).toBe(404);
+  await other.close();
+  // 持ち主は作れる
+  expect((await page.request.post("/api/escalations", { data: { conversationId: id } })).status()).toBe(200);
+});
+
 test("ヒアリングの初期値は、本人の依頼でなければ返さない", async ({ request }) => {
   const res = await request.get("/api/escalations/not-a-real-id/hearing");
   expect([401, 404]).toContain(res.status());

@@ -119,7 +119,7 @@ export function buildActions(input: {
   buttons.push({ kind: "link", label: DOCS_LABEL, href: DOCS_URL, sub: "トドケデ 書類作成" });
   // 行政書士への依頼も毎回出す（F-26。Q-14）。この回答に行政書士の依頼カードが出ているとき（lane=gyosei）は重ねない。受け手が「なし」の地域では出さない（F-07）
   const receiver = input.receiver ?? (SERVICE.gyoseiReceiver as GyoseiReceiver);
-  if (lane !== "gyosei" && receiver !== "なし") buttons.push({ kind: "request", label: REQUEST_LABEL, href: "", sub: "トドケデ提携の行政書士" });
+  if (lane !== "gyosei" && receiver !== "なし") buttons.push({ kind: "request", label: REQUEST_LABEL, href: "" });
   if (fireManager || PLAN_WORDS.test(latest))
     buttons.push({ kind: "link", label: "消防計画を作る", href: PLAN_URL, sub: "トドケデ 消防計画" });
   const station = findStation(userTexts);

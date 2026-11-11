@@ -7,6 +7,7 @@ import { runRules, rulesNote } from "../rules/extract.ts";
 import { detectEscalation, laneRules, type Lane } from "./escalation";
 import { actionsNote, buildActions, type Actions } from "./actions";
 import { recordError, recordLimit } from "./events";
+import { withRequestEscalations } from "./escalations";
 
 export const chat = new Hono<AppEnv>();
 
@@ -32,15 +33,19 @@ const STALLED_NOTE = "\n\n（回答の生成が途中で止まりました。も
  */
 function textStream(
   source: ReadableStream<Uint8Array>,
-  onDone: (full: string, failure?: "timeout" | "fallback") => void,
+  onDone: (full: string, failure?: "timeout" | "fallback") => void | Promise<void>,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
   let full = "";
+  // 保存を始めたら、そのあとに相手が切断しても（cancel）二重に保存しない
+  let finished = false;
 
-  const finish = (controller: ReadableStreamDefaultController<Uint8Array>, note = "") => {
+  // 回答の保存を終えてからストリームを閉じる。閉じた時点で画面に回答の下のボタンが出るので、
+  // その後に押された「行政書士に依頼する」が、保存済みの回答を前提にできる（F-26 fixrules R4）
+  const finish = async (controller: ReadableStreamDefaultController<Uint8Array>, note = "") => {
     // 計測（error_shown）: 無応答の打ち切りは timeout、何も返らずフォールバック文になったら fallback
     const failure = note === STALLED_NOTE ? "timeout" : full ? undefined : "fallback";
     const tail = full ? note : ASSISTANT_FALLBACK;
@@ -48,8 +53,9 @@ function textStream(
       full += tail;
       controller.enqueue(encoder.encode(tail));
     }
+    finished = true;
+    await Promise.resolve(onDone(full, failure)).catch((err) => console.error("save_error", err));
     controller.close();
-    onDone(full, failure);
   };
 
   return new ReadableStream<Uint8Array>({
@@ -90,7 +96,7 @@ function textStream(
     },
     cancel() {
       reader.cancel().catch(() => {});
-      onDone(full || ASSISTANT_FALLBACK);
+      if (!finished) void onDone(full || ASSISTANT_FALLBACK);
     },
   });
 }
@@ -238,12 +244,13 @@ chat.post("/", async (c) => {
   c.executionCtx.waitUntil(new Promise<void>((r) => (resolveSaved = r)));
   const stream = textStream(source, (full, failure) => {
     if (failure) recordError(c, failure === "timeout" ? "ai_timeout" : "ai_error", user.email);
-    db.batch([
+    return db.batch([
       db
         .prepare("INSERT INTO messages (id, conversation_id, role, content, escalation_id, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)")
         .bind(crypto.randomUUID(), convId, full, escalation?.id ?? null, Date.now()),
       db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").bind(Date.now(), convId),
     ])
+      .then(() => {})
       .catch((err) => console.error("save_error", err))
       .finally(() => resolveSaved());
   });
@@ -279,13 +286,14 @@ conversations.get("/:id", async (c) => {
     .first();
   if (!conv) return c.json({ error: "not_found" }, 404);
   const { results } = await c.env.DB.prepare(
-    `SELECT m.id, m.role, m.content, e.id AS escalationId, e.lane AS escalationLane, e.status AS escalationStatus
+    `SELECT m.id, m.role, m.content, m.created_at AS createdAt, e.id AS escalationId, e.lane AS escalationLane, e.status AS escalationStatus
        FROM messages m LEFT JOIN escalations e ON e.id = m.escalation_id
       WHERE m.conversation_id = ? ORDER BY m.created_at ASC`,
   )
     .bind(c.req.param("id"))
-    .all();
-  return c.json({ conversation: conv, messages: results });
+    .all<{ role: string; createdAt: number; escalationId: string | null }>();
+  // 回答の下の「行政書士に依頼する」で作った引き継ぎを、その相談文の回答に付けて返す（F-26 fixrules R4）
+  return c.json({ conversation: conv, messages: await withRequestEscalations(c.env.DB, c.req.param("id"), results) });
 });
 
 conversations.delete("/:id", async (c) => {
