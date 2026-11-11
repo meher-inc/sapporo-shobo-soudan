@@ -200,3 +200,25 @@ test("回答の保存より先に作られた依頼も、開き直したとき�
   const out = await withRequestEscalations(d1(db), "c-alice", rows);
   assert.equal(out.find((x) => x.id === "m2")!.requestEscalationId, r.body.escalation?.id);
 });
+
+test("AI の失敗で回答が保存されなかった相談の依頼は、次の相談の回答に付けない（レビュー L-12）", async () => {
+  const { db, call } = setup();
+  // m1・m2 の後、m3 の相談文から依頼を検知したが、AI の失敗で回答が保存されなかった
+  msg(db, "m3", "user", 200);
+  esc(db, "e-failed", "gyosei", 200);
+  // 次の相談文 m5 とその回答 m6。m6 の下のボタンで依頼を作る
+  msg(db, "m5", "user", 300);
+  msg(db, "m6", "assistant", 301);
+  const r = await call("alice", "c-alice");
+  assert.notEqual(r.body.escalation?.id, "e-failed");
+  const rows = db.prepare("SELECT id, role, created_at AS createdAt, escalation_id AS escalationId FROM messages ORDER BY created_at").all() as {
+    id: string;
+    role: string;
+    createdAt: number;
+    escalationId: string | null;
+  }[];
+  const out = await withRequestEscalations(d1(db), "c-alice", rows);
+  // m6 には、m6 で押した依頼が付く（失敗した相談の依頼ではない）
+  assert.equal(out.find((x) => x.id === "m6")!.requestEscalationId, r.body.escalation?.id);
+  assert.ok(!out.some((x) => x.requestEscalationId === "e-failed"));
+});

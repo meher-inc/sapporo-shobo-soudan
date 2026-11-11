@@ -62,7 +62,7 @@ type MessageRow = { role: string; createdAt: number; escalationId?: string | nul
 
 /**
  * 会話を開き直したときの行に、回答に結びついていない行政書士の引き継ぎ（ボタンで作ったもの）を足す（fixrules R4）。
- * 引き継ぎの作成時刻（＝相談文の時刻）より後の、最初の回答に requestEscalation* として付ける。点検・弁護士のカードが付いた回答でも両方を出せる
+ * 引き継ぎの作成時刻（＝相談文の時刻）の相談文の、直後の回答に requestEscalation* として付ける（回答がなければ付けない）。点検・弁護士のカードが付いた回答でも両方を出せる
  */
 export async function withRequestEscalations<T extends MessageRow>(db: D1Database, conversationId: string, rows: T[]) {
   const { results } = await db
@@ -75,8 +75,13 @@ export async function withRequestEscalations<T extends MessageRow>(db: D1Databas
     .all<{ id: string; lane: Lane; status: string; createdAt: number }>();
   const out = rows.map((r) => ({ ...r }) as T & { requestEscalationId?: string; requestEscalationLane?: Lane; requestEscalationStatus?: string });
   for (const e of results) {
-    const target = out.find((r) => r.role === "assistant" && Number(r.createdAt) >= e.createdAt && !r.requestEscalationId);
-    if (!target) continue;
+    // 付ける先は、その相談文（作成時刻以前の最後の相談文）の直後の回答だけ。AI の失敗などで回答が保存されていなければ付けない（F-26 レビュー L-12）
+    let asked = -1;
+    out.forEach((r, i) => {
+      if (r.role === "user" && Number(r.createdAt) <= e.createdAt) asked = i;
+    });
+    const target = asked >= 0 ? out[asked + 1] : undefined;
+    if (!target || target.role !== "assistant" || target.requestEscalationId) continue;
     target.requestEscalationId = e.id;
     target.requestEscalationLane = e.lane;
     target.requestEscalationStatus = e.status;
