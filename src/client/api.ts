@@ -22,7 +22,8 @@ export interface EscalationRef {
 
 /** 回答の下に出すボタン（作成ツール・電話）と、押すだけで答えられる選択肢。サーバーが決める（src/worker/actions.ts） */
 export interface AnswerActions {
-  buttons: { kind: "link" | "tel"; label: string; href: string; sub?: string }[];
+  /** kind=request は「行政書士に依頼する」（押すと依頼カードを開く。href は使わない） */
+  buttons: { kind: "link" | "tel" | "request"; label: string; href: string; sub?: string }[];
   /** topic は計測（condition_answered）に使う質問の名前 */
   question?: { topic?: string; text: string; options: { label: string; text: string }[] };
 }
@@ -32,6 +33,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   escalation?: EscalationRef;
+  /** 回答の下の「行政書士に依頼する」で作った（使い回した）行政書士への引き継ぎ。escalation（点検・弁護士など）とは別に出す */
+  request?: EscalationRef;
   actions?: AnswerActions;
 }
 
@@ -104,15 +107,23 @@ export async function listConversations(): Promise<ConversationSummary[]> {
 export async function loadConversation(id: string): Promise<ChatMessage[]> {
   const res = await fetch(`/api/conversations/${id}`);
   if (!res.ok) throw new ApiError(res.status, "load_failed");
-  type Row = Omit<ChatMessage, "escalation"> & {
+  type Row = Omit<ChatMessage, "escalation" | "request"> & {
+    createdAt?: number;
     escalationId: string | null;
     escalationLane: EscalationLane | null;
     escalationStatus: EscalationRef["status"] | null;
+    requestEscalationId?: string | null;
+    requestEscalationLane?: EscalationLane | null;
+    requestEscalationStatus?: EscalationRef["status"] | null;
   };
   const { messages } = (await res.json()) as { messages: Row[] };
-  return messages.map(({ escalationId, escalationLane, escalationStatus, ...m }) => ({
+  return messages.map(({ createdAt: _c, escalationId, escalationLane, escalationStatus, requestEscalationId, requestEscalationLane, requestEscalationStatus, ...m }) => ({
     ...m,
     escalation: escalationId && escalationLane && escalationStatus ? { id: escalationId, lane: escalationLane, status: escalationStatus } : undefined,
+    request:
+      requestEscalationId && requestEscalationLane && requestEscalationStatus
+        ? { id: requestEscalationId, lane: requestEscalationLane, status: requestEscalationStatus }
+        : undefined,
   }));
 }
 
@@ -143,6 +154,18 @@ export async function requestHandoff(id: string, body: HandoffRequest): Promise<
     const b = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ApiError(res.status, b.error ?? "request_failed");
   }
+}
+
+/** 回答の下の「行政書士に依頼する」。この会話の行政書士への引き継ぎを作る（同じ会話ではすでにあるものを返す） */
+export async function createRequest(conversationId: string): Promise<EscalationRef> {
+  const res = await fetch("/api/escalations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ conversationId }),
+  });
+  const b = (await res.json().catch(() => ({}))) as { escalation?: EscalationRef; error?: string };
+  if (!res.ok || !b.escalation) throw new ApiError(res.status, b.error ?? "request_failed");
+  return b.escalation;
 }
 
 export async function deleteConversation(id: string): Promise<void> {

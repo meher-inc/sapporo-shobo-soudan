@@ -158,6 +158,9 @@ textarea { font: inherit; }
   animation: chipIn 0.6s var(--spring) both; transition: transform 0.35s var(--spring);
 }
 .action-btn:active { transform: scale(0.97); }
+/* 「行政書士に依頼する」は押すとその場でシートを開くので button。a と同じ見た目にそろえる */
+button.action-btn { width: 100%; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+button.action-btn:disabled { opacity: 0.6; cursor: progress; }
 .action-btn.primary { background: var(--accent); color: #fff; box-shadow: 0 8px 24px var(--accent-glow); }
 .action-label { font-size: 16px; font-weight: 700; line-height: 1.3; }
 .action-sub { grid-column: 1; font-size: 12px; opacity: 0.75; }
@@ -360,6 +363,8 @@ textarea { font: inherit; }
 .handoff .btn { width: auto; padding: 10px 16px; font-size: 14px; }
 .handoff-done { display: inline-block; padding: 6px 12px; border-radius: 999px; font-weight: 600; color: var(--ink-2); background: rgba(20, 24, 33, 0.05); }
 .handoff p.handoff-diy { margin: 10px 0 0; font-size: 12.5px; }
+/* 行政書士への依頼の近くに出す、契約と受け手の注記（F-05・F-07） */
+.handoff p.handoff-note, .handoff-form p.handoff-note { margin: 0 0 8px; font-size: 12.5px; color: var(--ink-2); line-height: 1.6; }
 .handoff-diy a { color: var(--accent); font-weight: 600; text-decoration: underline; }
 .handoff-form label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .handoff-form input:not([type="checkbox"]), .handoff-form textarea {

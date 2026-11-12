@@ -463,7 +463,12 @@ test("a request to draft a filing is answered as information and handed to a gyo
   const card = reply.getByTestId("handoff-card");
   await expect(card).toContainText("行政書士");
   // 自分で作りたい人には、トドケデの作成ツールを回答の下のボタンで案内する
-  await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を作る" })).toHaveAttribute("href", /^https:\/\/docs\.todokede\.jp\/\?utm_source=todokede_ai/);
+  await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を自分で作る" })).toHaveAttribute("href", /^https:\/\/docs\.todokede\.jp\/\?utm_source=todokede_ai/);
+  // 依頼カードが出ている回答には、回答の下の「行政書士に依頼する」を重ねない（F-26）
+  await expect(reply.getByTestId("action-request")).toHaveCount(0);
+  // 依頼カードの近くに、契約の注記と受け手（要確認）の注記を出す（F-05・F-07）
+  await expect(card.getByTestId("handoff-contract")).toHaveText("書類の作成・提出は行政書士が行います。ご契約・お支払いは行政書士と直接です。");
+  await expect(card.getByTestId("handoff-receiver")).toHaveText("行政書士への依頼は、いただいた後に対応できるかを確認してご連絡します。");
   await card.getByTestId("handoff-open").click();
 
   const sheet = page.getByTestId("handoff-sheet");
@@ -550,6 +555,97 @@ test("行政書士への依頼は、届出の種類ごとに一度で聞き、�
   expect(saved?.docs.tp_plan_doc.holder).toBe("kanri");
 });
 
+test("普通の相談の回答の下に「自分で作る」と「行政書士に依頼する」を出し、依頼を押すと依頼カードが開いて受付まで進む（F-26） @local", async ({ page, request }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const reply = await ask(page, "防火管理者は必要ですか？");
+  // 相談文からは引き継ぎを検知しない普通の相談
+  await expect(reply.getByTestId("handoff-card")).toHaveCount(0);
+  await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を自分で作る" })).toHaveAttribute("href", /^https:\/\/docs\.todokede\.jp\/\?utm_source=todokede_ai/);
+  const req = reply.getByTestId("action-request");
+  await expect(req).toHaveCount(1);
+  await expect(req).toContainText("行政書士に依頼する");
+  const before = await events(page, "request_clicked", "answer_button");
+  await req.click();
+
+  // その場で依頼カードとシート（ヒアリング → 連絡先 → 送信）が開く
+  const card = reply.getByTestId("handoff-card");
+  await expect(card).toBeVisible();
+  await expect(card.getByTestId("handoff-contract")).toHaveText("書類の作成・提出は行政書士が行います。ご契約・お支払いは行政書士と直接です。");
+  await expect(card.getByTestId("handoff-receiver")).toHaveText("行政書士への依頼は、いただいた後に対応できるかを確認してご連絡します。");
+  // 依頼カードが出たら、回答の下の依頼のボタンは重ねない
+  await expect(reply.getByTestId("action-request")).toHaveCount(0);
+  const sheet = page.getByTestId("handoff-sheet");
+  await expect(sheet.getByTestId("hearing")).toBeVisible();
+  await expect.poll(async () => (await events(page, "request_clicked", "answer_button")).total).toBe(before.total + 1);
+  await sheet.getByTestId("hearing-skip").click();
+  await expect(sheet.getByTestId("handoff-contract")).toBeVisible();
+  await sheet.getByTestId("handoff-name").fill("テスト 依頼ボタン");
+  const email = uniqueEmail("request-button");
+  await sheet.getByTestId("handoff-email").fill(email);
+  await sheet.getByTestId("handoff-consent").check();
+  await sheet.getByTestId("handoff-submit").click();
+  await expect(page.getByTestId("toast")).toContainText("ご依頼を受け付けました");
+  await expect(card.getByTestId("handoff-done")).toHaveText("ご依頼を受け付けました");
+
+  // 同じ会話でもう一度作ろうとしても、引き継ぎは1件のまま（受付済みの1件が返る）
+  const conv = (await (await page.request.get("/api/conversations")).json()) as { conversations: { id: string }[] };
+  const again = (await (await page.request.post("/api/escalations", { data: { conversationId: conv.conversations[0].id } })).json()) as { escalation: { status: string } };
+  expect(again.escalation.status).toBe("requested");
+  await request.get(`/auth/test-login?email=${encodeURIComponent("s.maru0714@gmail.com")}&next=/`);
+  const list = (await (await request.get("/api/admin/escalations")).json()) as { escalations: { conversationId: string; reasons: string; email: string | null }[] };
+  const mine = list.escalations.filter((e) => e.conversationId === conv.conversations[0].id);
+  expect(mine).toHaveLength(1);
+  expect(mine[0].email).toBe(email);
+  expect(JSON.parse(mine[0].reasons)).toEqual(["回答の下の依頼ボタン"]);
+});
+
+test("緊急時と弁護士の案内の回答には「自分で作る」「行政書士に依頼する」を出さない（F-26） @local", async ({ page }) => {
+  await page.goto("/");
+  const fire = await ask(page, "店が燃えています");
+  await expect(fire.getByTestId("action-button")).toHaveText(/119番に電話する/);
+  await expect(fire.getByTestId("action-request")).toHaveCount(0);
+  const lawyer = await ask(page, "是正命令が来ました。どうすればいいですか");
+  await expect(lawyer.getByTestId("handoff-card")).toBeVisible();
+  await expect(lawyer.getByTestId("action-button")).toHaveCount(0);
+  await expect(lawyer.getByTestId("action-request")).toHaveCount(0);
+});
+
+test("点検・工事のカードが出た回答で依頼を押しても、両方のカードがその場でも開き直しても残る（F-26 fixrules R4） @local", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const reply = await ask(page, "消火器の点検をお願いしたい");
+  await expect(reply.locator(".handoff.lane-setsubi")).toHaveCount(1);
+  await reply.getByTestId("action-request").click();
+  await expect(page.getByTestId("handoff-sheet")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("handoff-sheet")).toHaveCount(0);
+  await expect(reply.locator(".handoff.lane-setsubi")).toHaveCount(1);
+  await expect(reply.locator(".handoff.lane-gyosei")).toHaveCount(1);
+  await expect(reply.getByTestId("action-request")).toHaveCount(0);
+  await page.reload();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("history-item").first().click();
+  const reopened = page.getByTestId("msg-assistant").last();
+  await expect(reopened.locator(".handoff.lane-setsubi")).toHaveCount(1);
+  await expect(reopened.locator(".handoff.lane-gyosei")).toHaveCount(1);
+});
+
+test("ログインした別の利用者は、他人の会話に依頼を作れない（F-26） @local", async ({ page, browser }) => {
+  await login(page, uniqueEmail("owner"));
+  await ask(page, "防火管理者は必要ですか？");
+  const conv = (await (await page.request.get("/api/conversations")).json()) as { conversations: { id: string }[] };
+  const id = conv.conversations[0].id;
+  const other = await browser.newContext({ extraHTTPHeaders: { "x-test-ip": testIp() } });
+  const p2 = await other.newPage();
+  await login(p2, uniqueEmail("other"));
+  const res = await p2.request.post("/api/escalations", { data: { conversationId: id } });
+  expect(res.status()).toBe(404);
+  await other.close();
+  // 持ち主は作れる
+  expect((await page.request.post("/api/escalations", { data: { conversationId: id } })).status()).toBe(200);
+});
+
 test("ヒアリングの初期値は、本人の依頼でなければ返さない", async ({ request }) => {
   const res = await request.get("/api/escalations/not-a-real-id/hearing");
   expect([401, 404]).toContain(res.status());
@@ -600,7 +696,7 @@ test("区が分かると、その区の消防署に電話するボタンを出�
   await expect(reply.getByTestId("action-button").filter({ hasText: "電話" })).toHaveCount(0);
   const tel = reply.getByTestId("action-tel-link").filter({ hasText: `${s.name}に電話する` });
   await expect(tel).toHaveAttribute("href", `tel:${s.tel.replace(/[^\d]/g, "")}`);
-  await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を作る" })).toBeVisible();
+  await expect(reply.getByTestId("action-button").filter({ hasText: "届出書類を自分で作る" })).toBeVisible();
 });
 
 test("「その他」を押すと入力欄に移る @local", async ({ page }) => {

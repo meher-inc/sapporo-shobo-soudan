@@ -2,11 +2,13 @@ import { Hono } from "hono";
 import type { AppEnv, Env } from "./env";
 import { createAnonymousUser } from "./session";
 import { takeUserQuota } from "./caps";
-import { ASSISTANT_FALLBACK, SYSTEM_PROMPT } from "../config/prompt";
+import { SYSTEM_PROMPT } from "../config/prompt";
+import { textStream } from "./stream.ts";
 import { runRules, rulesNote } from "../rules/extract.ts";
 import { detectEscalation, laneRules, type Lane } from "./escalation";
 import { actionsNote, buildActions, type Actions } from "./actions";
 import { recordError, recordLimit } from "./events";
+import { withRequestEscalations } from "./escalations";
 
 export const chat = new Hono<AppEnv>();
 
@@ -23,77 +25,6 @@ function titleFrom(text: string): string {
 /** 今まさに危険がある相談。回答の下に119番のボタンだけを出す */
 const EMERGENCY = /燃えて(い|る)|火事です|火が出た|煙が出てい|閉じ込められ|人が倒れ/;
 
-const IDLE_TIMEOUT_MS = 25_000;
-const STALLED_NOTE = "\n\n（回答の生成が途中で止まりました。もう一度お試しください。）";
-
-/**
- * Normalizes Workers AI SSE (legacy `response` or OpenAI-style `choices`) into plain text chunks.
- * Ends the reply if the upstream sends nothing for IDLE_TIMEOUT_MS, so a stalled model never hangs the client.
- */
-function textStream(
-  source: ReadableStream<Uint8Array>,
-  onDone: (full: string, failure?: "timeout" | "fallback") => void,
-): ReadableStream<Uint8Array> {
-  const reader = source.getReader();
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let buffer = "";
-  let full = "";
-
-  const finish = (controller: ReadableStreamDefaultController<Uint8Array>, note = "") => {
-    // 計測（error_shown）: 無応答の打ち切りは timeout、何も返らずフォールバック文になったら fallback
-    const failure = note === STALLED_NOTE ? "timeout" : full ? undefined : "fallback";
-    const tail = full ? note : ASSISTANT_FALLBACK;
-    if (tail) {
-      full += tail;
-      controller.enqueue(encoder.encode(tail));
-    }
-    controller.close();
-    onDone(full, failure);
-  };
-
-  return new ReadableStream<Uint8Array>({
-    // Loops until something is enqueued: a pull that enqueues nothing may not be called again.
-    async pull(controller) {
-      for (;;) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const idle = new Promise<"idle">((resolve) => (timer = setTimeout(() => resolve("idle"), IDLE_TIMEOUT_MS)));
-        const result = await Promise.race([reader.read(), idle]).finally(() => clearTimeout(timer));
-        if (result === "idle") {
-          reader.cancel().catch(() => {});
-          return finish(controller, STALLED_NOTE);
-        }
-        if (result.done) return finish(controller);
-        buffer += decoder.decode(result.value, { stream: true });
-        let emitted = false;
-        let idx: number;
-        while ((idx = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 1);
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
-          try {
-            const json = JSON.parse(data) as { response?: string; choices?: { delta?: { content?: string } }[] };
-            const piece = json.response ?? json.choices?.[0]?.delta?.content ?? "";
-            if (piece) {
-              full += piece;
-              controller.enqueue(encoder.encode(piece));
-              emitted = true;
-            }
-          } catch {
-            // partial or non-JSON keepalive line
-          }
-        }
-        if (emitted) return;
-      }
-    },
-    cancel() {
-      reader.cancel().catch(() => {});
-      onDone(full || ASSISTANT_FALLBACK);
-    },
-  });
-}
 
 /** Local E2E only: a fixed Markdown reply streamed in small chunks, in the Workers AI SSE format. */
 function mockStream(question: string): ReadableStream<Uint8Array> {
@@ -238,12 +169,13 @@ chat.post("/", async (c) => {
   c.executionCtx.waitUntil(new Promise<void>((r) => (resolveSaved = r)));
   const stream = textStream(source, (full, failure) => {
     if (failure) recordError(c, failure === "timeout" ? "ai_timeout" : "ai_error", user.email);
-    db.batch([
+    return db.batch([
       db
         .prepare("INSERT INTO messages (id, conversation_id, role, content, escalation_id, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)")
         .bind(crypto.randomUUID(), convId, full, escalation?.id ?? null, Date.now()),
       db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").bind(Date.now(), convId),
     ])
+      .then(() => {})
       .catch((err) => console.error("save_error", err))
       .finally(() => resolveSaved());
   });
@@ -279,13 +211,14 @@ conversations.get("/:id", async (c) => {
     .first();
   if (!conv) return c.json({ error: "not_found" }, 404);
   const { results } = await c.env.DB.prepare(
-    `SELECT m.id, m.role, m.content, e.id AS escalationId, e.lane AS escalationLane, e.status AS escalationStatus
+    `SELECT m.id, m.role, m.content, m.created_at AS createdAt, e.id AS escalationId, e.lane AS escalationLane, e.status AS escalationStatus
        FROM messages m LEFT JOIN escalations e ON e.id = m.escalation_id
       WHERE m.conversation_id = ? ORDER BY m.created_at ASC`,
   )
     .bind(c.req.param("id"))
-    .all();
-  return c.json({ conversation: conv, messages: results });
+    .all<{ role: string; createdAt: number; escalationId: string | null }>();
+  // 回答の下の「行政書士に依頼する」で作った引き継ぎを、その相談文の回答に付けて返す（F-26 fixrules R4）
+  return c.json({ conversation: conv, messages: await withRequestEscalations(c.env.DB, c.req.param("id"), results) });
 });
 
 conversations.delete("/:id", async (c) => {

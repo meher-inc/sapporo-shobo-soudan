@@ -2,18 +2,21 @@ import type { AnswerActions } from "./api";
 
 /** 回答の本文から、画面のボタン・選択肢と重なる行（「[届出書類を作る]」「- 10人未満」など）を除く。モデルが指示に反して書き出したときの保険 */
 // 作成ツールの名前とボタン名。ボタンが出ない回答でも、本文に「[トドケデ 書類作成]」のように書かれたら消す
-const TOOL_LABELS = ["トドケデ 書類作成", "トドケデ 消防計画", "届出書類を作る", "消防計画を作る"];
+const TOOL_LABELS = ["トドケデ 書類作成", "トドケデ 消防計画", "届出書類を自分で作る", "届出書類を作る", "消防計画を作る"];
 
 // 画面に選択肢が出る回答では、本文の質問（「〜ですか？」「〜を教えてください」）を消し、質問を選択肢の上の1つだけにする。
-// 作成ツールのボタンが出る回答では「最終的な判断は所轄の消防署が行います」も消す（締めくくりの一文で案内している）
+// 作成ツールのボタンが出る回答では「最終的な判断は所轄の消防署が行います」も消す（締めくくりの一文で案内している）。
+// ただし「〜でご確認ください」のように確認・相談を促す文は残す
 const QUESTION = /[？?]\s*$|(?:教えて|お知らせ|お聞かせ)(?:ください|下さい)/;
 const FINAL_SAY = /最終的な(?:判断|確認)は.{0,15}消防(?:署|本部|局)/;
+// 所轄の消防署での確認・相談を促す文は消さない（F-28 の締めくくりの1文。F-26 で作成ツールのボタンがほぼすべての回答に出るため。fixrules R5）
+const ASKS_CHECK = /確認|相談|問い合わせ|問合せ/;
 function trimSentences(line: string, a: AnswerActions): string | null {
   const hasLink = a.buttons.some((b) => "kind" in b && b.kind === "link");
   if (!line.trim() || (!a.question && !hasLink)) return line;
   const [, pre, body] = line.match(/^(\s*(?:(?:[-*・•]|\d+[.)])\s+)?)(.*)$/)!;
   const sentences = body.match(/[^。？?！!]*[。？?！!]+|[^。？?！!]+$/g) ?? [body];
-  const kept = sentences.filter((t) => !(a.question && QUESTION.test(t)) && !(hasLink && FINAL_SAY.test(t)));
+  const kept = sentences.filter((t) => !(a.question && QUESTION.test(t)) && !(hasLink && FINAL_SAY.test(t) && !ASKS_CHECK.test(t)));
   if (kept.length === sentences.length) return line;
   const rest = kept.join("").trim();
   return rest ? pre + rest : null;

@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv, Env } from "./env";
-import { handoffLanes, type Lane } from "./escalation";
-import { SERVICE } from "../config/service";
+import { handoffLanes, type Lane } from "./escalation.ts";
+import { SERVICE } from "../config/service.ts";
 import { caseSheet, missingRequired, sanitize, type HearingAnswers } from "../hearing/hearing.ts";
 import { prefill } from "../hearing/prefill.ts";
+import { eventIsTest, recordEvent } from "./events.ts";
 
 const LANE_LABEL: Record<Lane, string> = {
   gyosei: "行政書士（書類の作成・提出）",
@@ -14,6 +15,100 @@ const LANE_LABEL: Record<Lane, string> = {
 const MAX = { name: 60, email: 254, phone: 30, note: 1000 };
 
 export const escalations = new Hono<AppEnv>();
+
+/** 回答の下の「行政書士に依頼する」から作った引き継ぎの reasons（相談文から検知したものと区別する） */
+export const BUTTON_REASON = "回答の下の依頼ボタン";
+
+/**
+ * 回答の下の「行政書士に依頼する」（F-26）。その会話のいちばん新しい相談文に結びついた、行政書士への引き継ぎを返す（fixrules R1）。
+ * - いちばん新しい相談文に結びついた gyosei の引き継ぎ（相談文から検知したもの・ボタンで作ったもの）があれば、それを返す（created=false）
+ * - なければ作る（status=detected、reasons=[BUTTON_REASON]、質問と作成時刻はいちばん新しい相談文のもの）。古い相談文の引き継ぎは使い回さない
+ * - 同じ相談文には、何度押しても・同時に押しても1件（1文の INSERT ... WHERE NOT EXISTS）
+ * - 自分の会話にしか作れない（他人の会話・相談文のない会話は null）
+ * - 回答（messages.escalation_id）には結びつけない。開き直したときは withRequestEscalations() が、相談文の次の回答に付けて返す（fixrules R4）
+ */
+export async function createButtonEscalation(
+  db: D1Database,
+  userId: string,
+  conversationId: string,
+): Promise<{ escalation: { id: string; lane: "gyosei"; status: "detected" | "requested" }; created: boolean } | null> {
+  const conv = await db.prepare("SELECT id FROM conversations WHERE id = ? AND user_id = ?").bind(conversationId, userId).first();
+  if (!conv) return null;
+  const last = await db
+    .prepare("SELECT content, created_at FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY created_at DESC LIMIT 1")
+    .bind(conversationId)
+    .first<{ content: string; created_at: number }>();
+  if (!last) return null;
+  // 相談文から検知した引き継ぎは、相談文と同じ時刻で作られる（chat.ts）。ボタンで作るものも相談文の時刻にそろえる
+  const res = await db
+    .prepare(
+      `INSERT INTO escalations (id, conversation_id, user_id, lane, reasons, question, created_at)
+       SELECT ?1, ?2, ?3, 'gyosei', ?4, ?5, ?6
+        WHERE NOT EXISTS (SELECT 1 FROM escalations WHERE conversation_id = ?2 AND user_id = ?3 AND lane = 'gyosei' AND created_at >= ?6)`,
+    )
+    .bind(crypto.randomUUID(), conversationId, userId, JSON.stringify([BUTTON_REASON]), last.content, last.created_at)
+    .run();
+  const row = await db
+    .prepare(
+      "SELECT id, status FROM escalations WHERE conversation_id = ? AND user_id = ? AND lane = 'gyosei' AND created_at >= ? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(conversationId, userId, last.created_at)
+    .first<{ id: string; status: "detected" | "requested" }>();
+  if (!row) return null;
+  return { escalation: { id: row.id, lane: "gyosei", status: row.status }, created: (res.meta?.changes ?? 0) > 0 };
+}
+
+type MessageRow = { role: string; createdAt: number; escalationId?: string | null } & Record<string, unknown>;
+
+/**
+ * 会話を開き直したときの行に、回答に結びついていない行政書士の引き継ぎ（ボタンで作ったもの）を足す（fixrules R4）。
+ * 引き継ぎの作成時刻（＝相談文の時刻）の相談文の、直後の回答に requestEscalation* として付ける（回答がなければ付けない）。点検・弁護士のカードが付いた回答でも両方を出せる
+ */
+export async function withRequestEscalations<T extends MessageRow>(db: D1Database, conversationId: string, rows: T[]) {
+  const { results } = await db
+    .prepare(
+      `SELECT e.id, e.lane, e.status, e.created_at AS createdAt FROM escalations e
+        WHERE e.conversation_id = ? AND e.lane = 'gyosei' AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.escalation_id = e.id)
+        ORDER BY e.created_at ASC`,
+    )
+    .bind(conversationId)
+    .all<{ id: string; lane: Lane; status: string; createdAt: number }>();
+  const out = rows.map((r) => ({ ...r }) as T & { requestEscalationId?: string; requestEscalationLane?: Lane; requestEscalationStatus?: string });
+  for (const e of results) {
+    // 付ける先は、その相談文（作成時刻以前の最後の相談文）の直後の回答だけ。AI の失敗などで回答が保存されていなければ付けない（F-26 レビュー L-12）
+    let asked = -1;
+    out.forEach((r, i) => {
+      if (r.role === "user" && Number(r.createdAt) <= e.createdAt) asked = i;
+    });
+    const target = asked >= 0 ? out[asked + 1] : undefined;
+    if (!target || target.role !== "assistant" || target.requestEscalationId) continue;
+    target.requestEscalationId = e.id;
+    target.requestEscalationLane = e.lane;
+    target.requestEscalationStatus = e.status;
+  }
+  return out;
+}
+
+escalations.post("/", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  if (SERVICE.gyoseiReceiver === "なし") return c.json({ error: "no_receiver" }, 400);
+  const body = (await c.req.json().catch(() => null)) as { conversationId?: unknown } | null;
+  const conversationId = typeof body?.conversationId === "string" ? body.conversationId : "";
+  if (!conversationId) return c.json({ error: "conversation_required" }, 400);
+  // 相談の送信と同じレート制限（利用者ごと。鍵は相談とは別）。制限の仕組みが使えないときは通す（fixrules R3）
+  try {
+    const { success } = await c.env.CHAT_LIMITER.limit({ key: `request:${user.id}` });
+    if (!success) return c.json({ error: "rate_limited" }, 429);
+  } catch (err) {
+    console.error("request_limit_error", err);
+  }
+  const result = await createButtonEscalation(c.env.DB, user.id, conversationId);
+  if (!result) return c.json({ error: "not_found" }, 404);
+  // 新しく依頼を始めたときだけ1件として数える（誰が・何を相談したかは持たない。fixrules R3）
+  if (result.created) recordEvent(c, "request_clicked", "answer_button", eventIsTest(c, user.email));
+  return c.json({ escalation: result.escalation });
+});
 
 /**
  * 相談者が画面で同意し、連絡先を送ったときだけ、この相談を提携の専門家に共有する。
@@ -42,7 +137,8 @@ escalations.post("/:id/request", async (c) => {
     .first<{ id: string; conversation_id: string; lane: Lane; status: string }>();
   if (!row) return c.json({ error: "not_found" }, 404);
   if (!handoffLanes.includes(row.lane)) return c.json({ error: "no_handoff" }, 400);
-  if (row.status === "requested") return c.json({ ok: true, status: "requested" });
+  // 送信済みの依頼に「受け付けました」を返さない（通知を送っていないので。fixrules R2）
+  if (row.status === "requested") return c.json({ error: "already_requested", status: "requested" }, 409);
 
   // ヒアリングは行政書士への依頼だけ。送られていなければ、従来どおり連絡先だけで受ける
   let hearing: HearingAnswers | null = null;
