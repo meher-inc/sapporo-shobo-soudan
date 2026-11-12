@@ -76,7 +76,7 @@ pnpm screenshots       # docs/screenshots を撮り直す
 
 - `playwright.config.ts` が Stripe のモックと `wrangler dev`（`E2E_MODE=1`）を起動します。`/auth/test-login` と `/api/test/*` は `E2E_MODE=1` かつ localhost のときだけ有効です。
 - `CLOUDFLARE_API_TOKEN` がないときは Workers AI を使わない `mock` 環境で動き、`@real-ai` のテストは飛ばします。
-- Playwright のブラウザを取得できない環境では `CHROMIUM_PATH=<chromium の実行ファイル>` を付けると Chromium だけで実行します（WebKit は GitHub Actions で確認）。
+- Playwright のブラウザを取得できない環境では `CHROMIUM_PATH=<chromium の実行ファイル>` を付けると Chromium だけで実行します（WebKit は GitHub Actions の macOS で確認。Linux の WebKit は GPU なしでガラスの面を描くため、1つの操作に数十秒かかって時間切れになる）。
 - `BASE_URL=https://...` を付けると、ローカル専用の機能を使わないテストを本番に対して実行します。
 
 ## 本番の設定（Secrets）
