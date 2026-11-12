@@ -1,8 +1,9 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "./env";
 import { base64url, createSession, destroySession, isHttps, randomToken } from "./session";
 import { isTestVisit, visitSource } from "./traffic";
+import { adoptAnonymous } from "./adopt.ts";
 
 const OAUTH_COOKIE = "oauth";
 
@@ -35,23 +36,6 @@ async function upsertUser(
     .bind(id, profile.sub, profile.email, profile.name ?? null, profile.picture ?? null, visit.source, visit.isTest ? 1 : 0, Date.now())
     .run();
   return id;
-}
-
-/**
- * Moves an anonymous user's conversations to the signed-in account. The earlier first-consultation
- * time is kept as a record only (nothing is gated on it since consultations became free).
- */
-async function adoptAnonymous(c: Context<AppEnv>, userId: string): Promise<void> {
-  const anon = c.get("user");
-  if (!anon?.is_anonymous || anon.id === userId) return;
-  const db = c.env.DB;
-  await db.batch([
-    db.prepare("UPDATE conversations SET user_id = ? WHERE user_id = ?").bind(userId, anon.id),
-    db
-      .prepare("UPDATE users SET trial_started_at = MIN(COALESCE(trial_started_at, ?1), COALESCE(?1, trial_started_at)) WHERE id = ?2")
-      .bind(anon.trial_started_at, userId),
-    db.prepare("DELETE FROM users WHERE id = ? AND is_anonymous = 1").bind(anon.id),
-  ]);
 }
 
 auth.get("/google", async (c) => {
@@ -118,7 +102,7 @@ auth.get("/callback", async (c) => {
   }
 
   const userId = await upsertUser(c.env.DB, payload, { source: c.get("user")?.source ?? visitSource(c), isTest: isTestVisit(c, payload.email) || Boolean(c.get("user")?.is_test) });
-  await adoptAnonymous(c, userId);
+  await adoptAnonymous(c.env.DB, c.get("user"), userId);
   await createSession(c, userId);
   return c.redirect(safeNext(saved.next));
 });
@@ -134,7 +118,7 @@ auth.get("/test-login", async (c) => {
   if (c.env.E2E_MODE !== "1" || !(host === "localhost" || host === "127.0.0.1")) return c.notFound();
   const email = c.req.query("email") ?? "tester@example.com";
   const userId = await upsertUser(c.env.DB, { sub: `test-${email}`, email, name: "テスト ユーザー" }, { source: visitSource(c), isTest: isTestVisit(c, email) });
-  await adoptAnonymous(c, userId);
+  await adoptAnonymous(c.env.DB, c.get("user"), userId);
   await createSession(c, userId);
   return c.redirect(safeNext(c.req.query("next")));
 });

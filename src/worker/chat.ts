@@ -165,6 +165,8 @@ chat.post("/", async (c) => {
     }
   }
 
+  // 回答の ID は先に決めて画面へ渡す（x-answer-id）。「行政書士に依頼する」はこの ID で押した回答を伝える（plan 20261112-keep-requests-on-login N-2）
+  const answerId = crypto.randomUUID();
   let resolveSaved: () => void;
   c.executionCtx.waitUntil(new Promise<void>((r) => (resolveSaved = r)));
   const stream = textStream(source, (full, failure) => {
@@ -172,7 +174,7 @@ chat.post("/", async (c) => {
     return db.batch([
       db
         .prepare("INSERT INTO messages (id, conversation_id, role, content, escalation_id, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)")
-        .bind(crypto.randomUUID(), convId, full, escalation?.id ?? null, Date.now()),
+        .bind(answerId, convId, full, escalation?.id ?? null, Date.now()),
       db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").bind(Date.now(), convId),
     ])
       .then(() => {})
@@ -185,6 +187,7 @@ chat.post("/", async (c) => {
     "content-type": "text/plain; charset=utf-8",
     "cache-control": "no-store",
     "x-conversation-id": convId,
+    "x-answer-id": answerId,
     ...(escalation ? { "x-escalation": encodeURIComponent(JSON.stringify(escalation)) } : {}),
     ...(actions.buttons.length || actions.question ? { "x-actions": encodeURIComponent(JSON.stringify(actions)) } : {}),
   });

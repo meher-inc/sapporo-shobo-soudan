@@ -20,39 +20,55 @@ export const escalations = new Hono<AppEnv>();
 export const BUTTON_REASON = "回答の下の依頼ボタン";
 
 /**
- * 回答の下の「行政書士に依頼する」（F-26）。その会話のいちばん新しい相談文に結びついた、行政書士への引き継ぎを返す（fixrules R1）。
- * - いちばん新しい相談文に結びついた gyosei の引き継ぎ（相談文から検知したもの・ボタンで作ったもの）があれば、それを返す（created=false）
- * - なければ作る（status=detected、reasons=[BUTTON_REASON]、質問と作成時刻はいちばん新しい相談文のもの）。古い相談文の引き継ぎは使い回さない
+ * 回答の下の「行政書士に依頼する」（F-26）。押した回答の相談文に結びついた、行政書士への引き継ぎを返す
+ * （fixrules R1 を「押した回答の相談文の依頼を使い回す」に読み替え。plan 20261112-keep-requests-on-login N-2）。
+ * - answerId: 押した回答（messages.id、role=assistant）。この会話の保存済みの回答でなければ null。
+ *   渡されないとき（古い画面）は、回答のある最後の相談文を使う。AI が失敗して回答のない相談文の依頼は作らない
+ * - その相談文に結びついた gyosei の引き継ぎ（相談文から検知したもの・ボタンで作ったもの）があれば、それを返す（created=false）
+ * - なければ作る（status=detected、reasons=[BUTTON_REASON]、質問と作成時刻はその相談文のもの）。ほかの相談文の引き継ぎは使い回さない
  * - 同じ相談文には、何度押しても・同時に押しても1件（1文の INSERT ... WHERE NOT EXISTS）
- * - 自分の会話にしか作れない（他人の会話・相談文のない会話は null）
+ * - 自分の会話にしか作れない（他人の会話・回答のない会話は null）
  * - 回答（messages.escalation_id）には結びつけない。開き直したときは withRequestEscalations() が、相談文の次の回答に付けて返す（fixrules R4）
  */
 export async function createButtonEscalation(
   db: D1Database,
   userId: string,
   conversationId: string,
+  answerId?: string,
 ): Promise<{ escalation: { id: string; lane: "gyosei"; status: "detected" | "requested" }; created: boolean } | null> {
   const conv = await db.prepare("SELECT id FROM conversations WHERE id = ? AND user_id = ?").bind(conversationId, userId).first();
   if (!conv) return null;
-  const last = await db
-    .prepare("SELECT content, created_at FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY created_at DESC LIMIT 1")
-    .bind(conversationId)
+  // 押した回答。回答は相談文の後に保存されるので、回答の時刻以前の最後の相談文がその回答の相談文
+  const answer = answerId
+    ? await db
+        .prepare("SELECT created_at FROM messages WHERE id = ? AND conversation_id = ? AND role = 'assistant'")
+        .bind(answerId, conversationId)
+        .first<{ created_at: number }>()
+    : await db
+        .prepare("SELECT created_at FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 1")
+        .bind(conversationId)
+        .first<{ created_at: number }>();
+  if (!answer) return null;
+  const asked = await db
+    .prepare("SELECT content, created_at FROM messages WHERE conversation_id = ? AND role = 'user' AND created_at <= ? ORDER BY created_at DESC LIMIT 1")
+    .bind(conversationId, answer.created_at)
     .first<{ content: string; created_at: number }>();
-  if (!last) return null;
-  // 相談文から検知した引き継ぎは、相談文と同じ時刻で作られる（chat.ts）。ボタンで作るものも相談文の時刻にそろえる
+  if (!asked) return null;
+  // 相談文から検知した引き継ぎは、相談文と同じ時刻で作られる（chat.ts）。ボタンで作るものも相談文の時刻にそろえる。
+  // その相談文の引き継ぎ = 作成時刻が相談文から回答までのもの
   const res = await db
     .prepare(
       `INSERT INTO escalations (id, conversation_id, user_id, lane, reasons, question, created_at)
        SELECT ?1, ?2, ?3, 'gyosei', ?4, ?5, ?6
-        WHERE NOT EXISTS (SELECT 1 FROM escalations WHERE conversation_id = ?2 AND user_id = ?3 AND lane = 'gyosei' AND created_at >= ?6)`,
+        WHERE NOT EXISTS (SELECT 1 FROM escalations WHERE conversation_id = ?2 AND user_id = ?3 AND lane = 'gyosei' AND created_at >= ?6 AND created_at <= ?7)`,
     )
-    .bind(crypto.randomUUID(), conversationId, userId, JSON.stringify([BUTTON_REASON]), last.content, last.created_at)
+    .bind(crypto.randomUUID(), conversationId, userId, JSON.stringify([BUTTON_REASON]), asked.content, asked.created_at, answer.created_at)
     .run();
   const row = await db
     .prepare(
-      "SELECT id, status FROM escalations WHERE conversation_id = ? AND user_id = ? AND lane = 'gyosei' AND created_at >= ? ORDER BY created_at DESC LIMIT 1",
+      "SELECT id, status FROM escalations WHERE conversation_id = ? AND user_id = ? AND lane = 'gyosei' AND created_at >= ? AND created_at <= ? ORDER BY created_at DESC LIMIT 1",
     )
-    .bind(conversationId, userId, last.created_at)
+    .bind(conversationId, userId, asked.created_at, answer.created_at)
     .first<{ id: string; status: "detected" | "requested" }>();
   if (!row) return null;
   return { escalation: { id: row.id, lane: "gyosei", status: row.status }, created: (res.meta?.changes ?? 0) > 0 };
@@ -93,9 +109,14 @@ escalations.post("/", async (c) => {
   const user = c.get("user");
   if (!user) return c.json({ error: "unauthorized" }, 401);
   if (SERVICE.gyoseiReceiver === "なし") return c.json({ error: "no_receiver" }, 400);
-  const body = (await c.req.json().catch(() => null)) as { conversationId?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { conversationId?: unknown; answerId?: unknown } | null;
   const conversationId = typeof body?.conversationId === "string" ? body.conversationId : "";
   if (!conversationId) return c.json({ error: "conversation_required" }, 400);
+  // 押した回答の ID（N-2）。古い画面は送らない（回答のある最後の相談文で扱う）
+  if (body?.answerId !== undefined && (typeof body.answerId !== "string" || !body.answerId || body.answerId.length > 64)) {
+    return c.json({ error: "invalid_answer" }, 400);
+  }
+  const answerId = typeof body?.answerId === "string" ? body.answerId : undefined;
   // 相談の送信と同じレート制限（利用者ごと。鍵は相談とは別）。制限の仕組みが使えないときは通す（fixrules R3）
   try {
     const { success } = await c.env.CHAT_LIMITER.limit({ key: `request:${user.id}` });
@@ -103,7 +124,7 @@ escalations.post("/", async (c) => {
   } catch (err) {
     console.error("request_limit_error", err);
   }
-  const result = await createButtonEscalation(c.env.DB, user.id, conversationId);
+  const result = await createButtonEscalation(c.env.DB, user.id, conversationId, answerId);
   if (!result) return c.json({ error: "not_found" }, 404);
   // 新しく依頼を始めたときだけ1件として数える（誰が・何を相談したかは持たない。fixrules R3）
   if (result.created) recordEvent(c, "request_clicked", "answer_button", eventIsTest(c, user.email));

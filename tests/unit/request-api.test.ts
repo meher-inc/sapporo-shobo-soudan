@@ -53,10 +53,14 @@ function setup(opts: { limited?: boolean } = {}) {
     return a;
   };
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as never;
-  const call = async (userId: string | null, conversationId: unknown) => {
+  const call = async (userId: string | null, conversationId: unknown, answerId?: unknown) => {
     const res = await app(userId).request(
       "/api/escalations",
-      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId }) },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(answerId === undefined ? { conversationId } : { conversationId, answerId }),
+      },
       env,
       ctx,
     );
@@ -184,13 +188,17 @@ test("開き直したとき、ボタンで作った依頼はその相談文の�
   assert.equal(out.find((x) => x.id === "m4")!.requestEscalationId, undefined);
 });
 
-test("回答の保存より先に作られた依頼も、開き直したときはその相談文の回答に付く（fixrules R4）", async () => {
+test("回答の保存より先には作らない。回答はストリームを閉じる前に保存され、ボタンはその後に出る（fixrules R4・N-2）", async () => {
   const { db, call } = setup();
-  // m1 の回答がまだ保存されていない状態で押す
+  // m1 の回答がまだ保存されていない状態で押す（画面からは起きない。ボタンは保存の後に出る）
   db.prepare("DELETE FROM messages WHERE id = 'm2'").run();
-  const r = await call("alice", "c-alice");
-  // その後で回答が保存される
+  assert.equal((await call("alice", "c-alice", "m2")).status, 404);
+  assert.equal((await call("alice", "c-alice")).status, 404);
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM escalations"), 0);
+  // 回答が保存された後に押すと、その相談文の依頼になり、開き直したときもその回答に付く
   msg(db, "m2", "assistant", 150);
+  const r = await call("alice", "c-alice", "m2");
+  assert.equal(r.status, 200);
   const rows = db.prepare("SELECT id, role, created_at AS createdAt, escalation_id AS escalationId FROM messages ORDER BY created_at").all() as {
     id: string;
     role: string;
@@ -221,4 +229,70 @@ test("AI の失敗で回答が保存されなかった相談の依頼は、次�
   // m6 には、m6 で押した依頼が付く（失敗した相談の依頼ではない）
   assert.equal(out.find((x) => x.id === "m6")!.requestEscalationId, r.body.escalation?.id);
   assert.ok(!out.some((x) => x.requestEscalationId === "e-failed"));
+});
+
+test("AI の失敗の後、1つ前の回答の下で押すと、押した回答の相談文の依頼になり、開き直しても残る（N-2）", async () => {
+  const { db, call } = setup();
+  // m1・m2 の後、相談文 m3 は保存されたが AI が失敗して回答がない
+  msg(db, "m3", "user", 200);
+  const r = await call("alice", "c-alice", "m2");
+  assert.equal(r.status, 200);
+  const row = db.prepare("SELECT question, created_at FROM escalations WHERE id = ?").get(r.body.escalation!.id) as { question: string; created_at: number };
+  // きっかけの質問（通知メール）は押した回答の相談文で、失敗した相談文ではない
+  assert.equal(row.question, "相談m1");
+  assert.equal(row.created_at, 100);
+  const rows = db.prepare("SELECT id, role, created_at AS createdAt, escalation_id AS escalationId FROM messages ORDER BY created_at").all() as {
+    id: string;
+    role: string;
+    createdAt: number;
+    escalationId: string | null;
+  }[];
+  const out = await withRequestEscalations(d1(db), "c-alice", rows);
+  assert.equal(out.find((x) => x.id === "m2")!.requestEscalationId, r.body.escalation?.id);
+  // 同じ回答でもう一度押しても1件
+  assert.equal((await call("alice", "c-alice", "m2")).body.escalation?.id, r.body.escalation?.id);
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM escalations"), 1);
+});
+
+test("回答の ID を送らない古い画面からは、回答のある最後の相談文で作る（N-2）", async () => {
+  const { db, call } = setup();
+  msg(db, "m3", "user", 200);
+  const r = await call("alice", "c-alice");
+  assert.equal(r.status, 200);
+  const row = db.prepare("SELECT question FROM escalations WHERE id = ?").get(r.body.escalation!.id) as { question: string };
+  assert.equal(row.question, "相談m1");
+  // その後で回答を ID つきで押しても同じ依頼
+  assert.equal((await call("alice", "c-alice", "m2")).body.escalation?.id, r.body.escalation?.id);
+});
+
+test("押した回答の相談文の依頼だけを使い回し、ほかの相談文の依頼は使わない（N-2・fixrules R1 の読み替え）", async () => {
+  const { db, call } = setup();
+  // 次の相談文 m3 から検知した依頼 e-new（回答 m4 に付いている）
+  msg(db, "m3", "user", 200);
+  esc(db, "e-new", "gyosei", 200);
+  msg(db, "m4", "assistant", 201, "e-new");
+  // m4 で押すと e-new を返す
+  assert.equal((await call("alice", "c-alice", "m4")).body.escalation?.id, "e-new");
+  // m2 で押すと m1 の依頼を新しく作る（e-new は使わない）
+  const r = await call("alice", "c-alice", "m2");
+  assert.notEqual(r.body.escalation?.id, "e-new");
+  const row = db.prepare("SELECT question, created_at FROM escalations WHERE id = ?").get(r.body.escalation!.id) as { question: string; created_at: number };
+  assert.equal(row.question, "相談m1");
+  assert.equal(row.created_at, 100);
+});
+
+test("ほかの会話の回答・相談文の ID・存在しない ID・不正な ID では作らない（N-2）", async () => {
+  const { db, call, events } = setup();
+  db.prepare("INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES ('c-bob', 'bob', 't', 1, 1)").run();
+  msg(db, "b1", "user", 100, null, "c-bob");
+  msg(db, "b2", "assistant", 101, null, "c-bob");
+  assert.equal((await call("alice", "c-alice", "b2")).status, 404);
+  assert.equal((await call("alice", "c-alice", "m1")).status, 404);
+  assert.equal((await call("alice", "c-alice", "no-such")).status, 404);
+  assert.equal((await call("bob", "c-alice", "m2")).status, 404);
+  assert.equal((await call("alice", "c-alice", 123)).status, 400);
+  assert.equal((await call("alice", "c-alice", "")).status, 400);
+  assert.equal((await call("alice", "c-alice", "x".repeat(65))).status, 400);
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM escalations"), 0);
+  assert.equal(events(), 0);
 });

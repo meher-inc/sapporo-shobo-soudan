@@ -157,6 +157,7 @@ export function App({ initialMe }: { initialMe: Me }) {
         ctrl.signal,
         (escalation) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, escalation } : x))),
         (actions) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, actions } : x))),
+        (answerId) => setMessages((m) => m.map((x) => (x.id === botId ? { ...x, answerId } : x))),
       );
       if (id) setConversationId(id);
       // The first message creates an anonymous session; reflect it so the menu shows history.
@@ -271,7 +272,8 @@ export function App({ initialMe }: { initialMe: Me }) {
     setRequestBusy(true);
     trackClick("handoff", label);
     try {
-      const ref = await createRequest(conversationId);
+      // 押した回答を伝える。AI の失敗の後でも、失敗した相談文ではなくこの回答の相談文の依頼になる（N-2）
+      const ref = await createRequest(conversationId, messages.find((x) => x.id === messageId)?.answerId);
       setMessages((m) => {
         const shown = m.some((x) => x.escalation?.id === ref.id || x.request?.id === ref.id);
         return m.map((x) =>

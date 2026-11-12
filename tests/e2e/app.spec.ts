@@ -600,6 +600,79 @@ test("普通の相談の回答の下に「自分で作る」と「行政書士�
   expect(JSON.parse(mine[0].reasons)).toEqual(["回答の下の依頼ボタン"]);
 });
 
+test("匿名で依頼を送ってから Google でログインしても、開き直すと受付済みのカードが残り、同じ相談をもう一度依頼できない（N-1） @local", async ({ page, request }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const reply = await ask(page, "防火管理者は必要ですか？");
+  await reply.getByTestId("action-request").click();
+  const sheet = page.getByTestId("handoff-sheet");
+  await sheet.getByTestId("hearing-skip").click();
+  await sheet.getByTestId("handoff-name").fill("テスト ログイン前の依頼");
+  const email = uniqueEmail("before-login");
+  await sheet.getByTestId("handoff-email").fill(email);
+  await sheet.getByTestId("handoff-consent").check();
+  await sheet.getByTestId("handoff-submit").click();
+  await expect(page.getByTestId("toast")).toContainText("ご依頼を受け付けました");
+
+  // ログイン（本番の Google ログインと同じく、匿名の利用者の記録をアカウントへ移す）
+  await login(page, uniqueEmail("after-request"));
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("history-item").first().click();
+  const reopened = page.getByTestId("msg-assistant").first();
+  await expect(reopened.getByTestId("handoff-done")).toHaveText("ご依頼を受け付けました");
+
+  // もう一度押しても新しい依頼はできず、受付済みの1件が返る
+  const conv = (await (await page.request.get("/api/conversations")).json()) as { conversations: { id: string }[] };
+  const again = (await (await page.request.post("/api/escalations", { data: { conversationId: conv.conversations[0].id } })).json()) as { escalation: { status: string } };
+  expect(again.escalation.status).toBe("requested");
+  await request.get(`/auth/test-login?email=${encodeURIComponent("s.maru0714@gmail.com")}&next=/`);
+  const list = (await (await request.get("/api/admin/escalations")).json()) as { escalations: { conversationId: string; status: string; email: string | null }[] };
+  const mine = list.escalations.filter((e) => e.conversationId === conv.conversations[0].id);
+  expect(mine).toHaveLength(1);
+  expect(mine[0].status).toBe("requested");
+  expect(mine[0].email).toBe(email);
+});
+
+test("送信に失敗した後、画面に残る1つ前の回答の下で押すと、その回答の相談の依頼になる（N-2） @local", async ({ page, request }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const first = await ask(page, "防火管理者は必要ですか？");
+  // 2つ目の相談は、サーバーでは保存されるが画面には失敗（503）として届く。画面は相談文と回答を消し、1つ前の回答が最後に戻る
+  await page.route("/api/chat", async (route) => {
+    await route.fetch();
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "ai_unavailable" }) });
+  });
+  await page.getByTestId("composer-input").fill("消防計画の届出のしかたを教えてください");
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("toast")).toContainText("送信に失敗しました");
+  await expect(page.getByTestId("msg-assistant")).toHaveCount(1);
+  await page.unroute("/api/chat");
+  // この 503 はテストで起こしたもの。ブラウザが出すエラーの記録から外す
+  const errors = (page as Page & { __errors: string[] }).__errors;
+  errors.splice(0, errors.length, ...errors.filter((e) => !/status of 503/.test(e)));
+
+  const sent = page.waitForRequest((r) => r.url().endsWith("/api/escalations") && r.method() === "POST");
+  await first.getByTestId("action-request").click();
+  const body = (await sent).postDataJSON() as { conversationId: string; answerId?: string };
+  expect(body.answerId).toBeTruthy();
+  await expect(first.getByTestId("handoff-card")).toBeVisible();
+
+  // 開き直すと、依頼カードは押した回答（1つ目）の下に残る
+  await page.goto("/");
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("history-item").first().click();
+  const answers = page.getByTestId("msg-assistant");
+  await expect(answers).toHaveCount(2);
+  await expect(answers.nth(0).getByTestId("handoff-card")).toBeVisible();
+  await expect(answers.nth(1).getByTestId("handoff-card")).toHaveCount(0);
+
+  // きっかけの質問（通知メール）は押した回答の相談文
+  await request.get(`/auth/test-login?email=${encodeURIComponent("s.maru0714@gmail.com")}&next=/`);
+  const list = (await (await request.get("/api/admin/escalations")).json()) as { escalations: { conversationId: string; question: string }[] };
+  const mine = list.escalations.filter((e) => e.conversationId === body.conversationId);
+  expect(mine.map((e) => e.question)).toEqual(["防火管理者は必要ですか？"]);
+});
+
 test("緊急時と弁護士の案内の回答には「自分で作る」「行政書士に依頼する」を出さない（F-26） @local", async ({ page }) => {
   await page.goto("/");
   const fire = await ask(page, "店が燃えています");
