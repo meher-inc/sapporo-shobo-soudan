@@ -51,6 +51,17 @@ test.describe(() => {
   // A Service Worker serving /assets/ would bypass page.route's delay, and the skeleton could vanish before it is measured.
   test.use({ serviceWorkers: "block" });
 
+  // この時間の判定から、CI のジョブの立ち上がり（ブラウザの最初のページのプロセス、開発サーバーの最初の応答）を除く。
+  // WebKit を macOS の別ジョブにしてから、このテストがジョブの最初の操作になり、最初の10数秒だけ遅い回があった
+  // （大阪 #22 で 5.8秒。同じ回の2件目も 1.9→3.1秒）。測りたいのはアプリが読み込まれてから使えるまで
+  test.beforeAll(async ({ browser }, info) => {
+    const context = await browser.newContext({ baseURL: info.project.use.baseURL });
+    const page = await context.newPage();
+    await page.goto("/");
+    await expect(page.getByTestId("composer-input")).toBeVisible();
+    await context.close();
+  });
+
   test("full-screen skeleton is shown first, then the composer is ready immediately", async ({ page }) => {
     await page.route("**/assets/*.js", async (route) => {
       await new Promise((r) => setTimeout(r, 800));
