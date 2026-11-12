@@ -633,20 +633,29 @@ test("匿名で依頼を送ってから Google でログインしても、開き
   expect(mine[0].email).toBe(email);
 });
 
+test.describe(() => {
+  // WebKit では Service Worker が制御するページの通信を page.route で差し替えられないことがあるので、このテストでは止める
+  test.use({ serviceWorkers: "block" });
 test("送信に失敗した後、画面に残る1つ前の回答の下で押すと、その回答の相談の依頼になる（N-2） @local", async ({ page, request }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   const first = await ask(page, "防火管理者は必要ですか？");
-  // 2つ目の相談は、サーバーでは保存されるが画面には失敗（503）として届く。画面は相談文と回答を消し、1つ前の回答が最後に戻る
-  await page.route("/api/chat", async (route) => {
-    await route.fetch();
-    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "ai_unavailable" }) });
-  });
-  await page.getByTestId("composer-input").fill("消防計画の届出のしかたを教えてください");
+  // 2つ目の相談は画面には失敗（503）として届く。画面は相談文と回答を消して入力欄に文を戻し、1つ前の回答が最後に戻る
+  const second = "消防計画の届出のしかたを教えてください";
+  await page.route("/api/chat", (route) =>
+    route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "ai_unavailable" }) }),
+  );
+  await page.getByTestId("composer-input").fill(second);
   await page.getByTestId("send-button").click();
-  await expect(page.getByTestId("toast")).toContainText("送信に失敗しました");
+  await expect(page.getByTestId("composer-input")).toHaveValue(second);
   await expect(page.getByTestId("msg-assistant")).toHaveCount(1);
   await page.unroute("/api/chat");
+  // サーバーには2つ目の相談文が保存されている状態にする（AI が失敗しても相談文は残る。ここでは回答も残るが、
+  // 直す前のコードは「いちばん新しい相談文」＝2つ目で依頼を作るので、押した回答の相談文になっているかを見分けられる）
+  const convId = ((await (await page.request.get("/api/conversations")).json()) as { conversations: { id: string }[] }).conversations[0].id;
+  const saved = await page.request.post("/api/chat", { data: { message: second, conversationId: convId } });
+  expect(saved.ok()).toBeTruthy();
+  await saved.text();
   // この 503 はテストで起こしたもの。ブラウザが出すエラーの記録から外す
   const errors = (page as Page & { __errors: string[] }).__errors;
   errors.splice(0, errors.length, ...errors.filter((e) => !/status of 503/.test(e)));
@@ -671,6 +680,7 @@ test("送信に失敗した後、画面に残る1つ前の回答の下で押す�
   const list = (await (await request.get("/api/admin/escalations")).json()) as { escalations: { conversationId: string; question: string }[] };
   const mine = list.escalations.filter((e) => e.conversationId === body.conversationId);
   expect(mine.map((e) => e.question)).toEqual(["防火管理者は必要ですか？"]);
+});
 });
 
 test("緊急時と弁護士の案内の回答には「自分で作る」「行政書士に依頼する」を出さない（F-26） @local", async ({ page }) => {
