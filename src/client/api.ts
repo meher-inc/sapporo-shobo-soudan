@@ -36,6 +36,8 @@ export interface ChatMessage {
   /** 回答の下の「行政書士に依頼する」で作った（使い回した）行政書士への引き継ぎ。escalation（点検・弁護士など）とは別に出す */
   request?: EscalationRef;
   actions?: AnswerActions;
+  /** サーバーに保存した回答の ID（messages.id）。「行政書士に依頼する」で押した回答を伝える。履歴から開いた回答は id と同じ */
+  answerId?: string;
 }
 
 export interface ConversationSummary {
@@ -72,6 +74,7 @@ export async function streamChat(
   signal: AbortSignal,
   onEscalation?: (escalation: EscalationRef) => void,
   onActions?: (actions: AnswerActions) => void,
+  onAnswerId?: (answerId: string) => void,
 ): Promise<string> {
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -86,6 +89,8 @@ export async function streamChat(
   const id = res.headers.get("x-conversation-id") ?? "";
   const escalation = res.headers.get("x-escalation");
   if (escalation) onEscalation?.(JSON.parse(decodeURIComponent(escalation)) as EscalationRef);
+  const answerId = res.headers.get("x-answer-id");
+  if (answerId) onAnswerId?.(answerId);
   const actions = res.headers.get("x-actions");
   if (actions) onActions?.(JSON.parse(decodeURIComponent(actions)) as AnswerActions);
   const reader = res.body.getReader();
@@ -119,6 +124,7 @@ export async function loadConversation(id: string): Promise<ChatMessage[]> {
   const { messages } = (await res.json()) as { messages: Row[] };
   return messages.map(({ createdAt: _c, escalationId, escalationLane, escalationStatus, requestEscalationId, requestEscalationLane, requestEscalationStatus, ...m }) => ({
     ...m,
+    ...(m.role === "assistant" ? { answerId: m.id } : {}),
     escalation: escalationId && escalationLane && escalationStatus ? { id: escalationId, lane: escalationLane, status: escalationStatus } : undefined,
     request:
       requestEscalationId && requestEscalationLane && requestEscalationStatus
@@ -156,12 +162,12 @@ export async function requestHandoff(id: string, body: HandoffRequest): Promise<
   }
 }
 
-/** 回答の下の「行政書士に依頼する」。この会話の行政書士への引き継ぎを作る（同じ会話ではすでにあるものを返す） */
-export async function createRequest(conversationId: string): Promise<EscalationRef> {
+/** 回答の下の「行政書士に依頼する」。押した回答（answerId）の相談文の、行政書士への引き継ぎを作る（同じ相談文ではすでにあるものを返す） */
+export async function createRequest(conversationId: string, answerId?: string): Promise<EscalationRef> {
   const res = await fetch("/api/escalations", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ conversationId }),
+    body: JSON.stringify(answerId ? { conversationId, answerId } : { conversationId }),
   });
   const b = (await res.json().catch(() => ({}))) as { escalation?: EscalationRef; error?: string };
   if (!res.ok || !b.escalation) throw new ApiError(res.status, b.error ?? "request_failed");
