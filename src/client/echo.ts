@@ -38,9 +38,13 @@ export function stripEchoes(text: string, a: AnswerActions = { buttons: [] }): s
     .split("\n")
     // モデルがボタンを <button> タグで書いたときは、タグを外してから判定する
     .map((line) => line.replace(/<\/?button[^>]*>/gi, ""))
-    .filter((line) => !(line.trim() && onlyLabels.test(line)))
+    // 太字の記号（** __）で囲んだ行も、記号を外して判定する
     .filter((line) => {
-      const m = line.match(LABEL_PREFIX);
+      const bare = line.replace(/\*\*|__/g, "");
+      return !(bare.trim() && onlyLabels.test(bare));
+    })
+    .filter((line) => {
+      const m = line.replace(/\*\*|__/g, "").match(LABEL_PREFIX);
       return !(m && m[1].trim() && onlyLabels.test(m[1]));
     })
     // ボタン・選択肢を並べる代わりにモデルが書く、改行タグだけの行も消す
@@ -53,6 +57,8 @@ export function stripEchoes(text: string, a: AnswerActions = { buttons: [] }): s
     .filter((line) => a.buttons.some((b) => !("kind" in b) || b.kind === "link") || !/作成ツール/.test(line))
     .map((line) => trimSentences(line, a))
     .filter((line): line is string => line !== null)
+    // 質問の文を消したあとに残る太字の記号だけの行（「**建物は何に使いますか？**」の残り）も消す
+    .filter((line) => !/^\s*(?:\*{2,}|_{2,})\s*$/.test(line))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
