@@ -79,7 +79,7 @@ function kyoto(scene: Scene, f: FilingFacts): FilingVerdict[] | null {
     case "stall": {
       const b = { procedure: "roten", title: "露店等の開設届", target, deadline: "実施する日の5日前まで", basis: `${K_JO} 第57条第9号、${K_KI} 第13条` };
       if (f.stall_fire === false) return [v({ ...b, result: "not_required", reason: "対象火気器具等を使わない露店は第9号の対象外", caveats: ["消防隊の通行など消火活動に支障を及ぼすおそれがある場合は第6号の届出が要る"] })];
-      return [v({ ...b, result: f.stall_fire ? "required" : "conditional", reason: "祭礼・縁日など多数の者が集合する催しで、対象火気器具等を使う露店", missing: f.stall_fire === undefined ? ["stall_fire"] : [], caveats: ["指定催しで露店等管理者の管理の下に開設する場合は不要", "署長が事前に状況を把握して指導したものは口頭でよい"] })];
+      return [v({ ...b, result: f.stall_fire ? "required" : "conditional", reason: "祭礼・縁日など多数の者が集合する催しで、対象火気器具等を使う露店", missing: f.stall_fire === undefined ? ["stall_fire"] : [], caveats: ["多数の者が集合する催しで対象火気器具等を使うときは、消火器を準備したうえで使う（条例第19条第1項第14号）", "指定催しで露店等管理者の管理の下に開設する場合は不要", "署長が事前に状況を把握して指導したものは口頭でよい"] })];
     }
     case "temp_use":
       return [v({ procedure: "ichiji-shiyo", title: "一時的な使用の届出", target, result: "conditional", basis: `${K_JO} 第55条・第57条第3号`, reason: "京都市の条例には一時的な店舗使用の届出の規定はない。使用開始届（7日前）の対象か、劇場・展示場などの用途なら催物の届出（5日前）かを所轄に確認する", missing: [] })];
@@ -108,6 +108,7 @@ const labelOf = (e: string) => EQUIPMENT_LABEL[e as Equipment] ?? e;
 
 function tokyo(scene: Scene, f: FilingFacts): FilingVerdict[] | null {
   const target = "消防署長";
+  let designatedMissing: string[] = ["occupancy", "total_area"];
   const designated = () => {
     // 指定防火対象物等: 令10条1項各号、令21条1項1号（(13)項ロを除く）・3号・7号に当たるもの
     if (!f.occupancy) return null;
@@ -116,7 +117,10 @@ function tokyo(scene: Scene, f: FilingFacts): FilingVerdict[] | null {
     const aa = judge("auto_alarm", facts);
     const aaHit = aa.result === "required" && /第一号|第三号|第七号/.test(aa.basis) && !/^13ロ/.test(f.occupancy.normalize("NFKC"));
     if (ex.result === "required" || aaHit) return true;
-    if (ex.result === "conditional" || aa.result === "conditional") return null;
+    if (ex.result === "conditional" || aa.result === "conditional") {
+      designatedMissing = [...ex.missing, ...aa.missing];
+      return null;
+    }
     return false;
   };
   switch (scene) {
@@ -129,8 +133,9 @@ function tokyo(scene: Scene, f: FilingFacts): FilingVerdict[] | null {
       if (f.building_permit === true) return [v({ ...b, result: "not_required", reason: "建築確認を受ける工事は対象外（同条ただし書）" })];
       const d = designated();
       if (d === false) return [v({ ...b, result: "not_required", reason: "指定防火対象物等に当たらない" })];
-      const miss = [...(f.building_permit === undefined ? ["building_permit"] : []), ...(d === null ? ["occupancy", "total_area"] : [])];
-      return [v({ ...b, result: miss.length ? "conditional" : "required", reason: "指定防火対象物等の修繕・模様替え・用途変更など（建築確認を受けるものを除く）", missing: [...new Set(miss)] })];
+      const miss = [...(f.building_permit === undefined ? ["building_permit"] : []), ...(d === null ? designatedMissing : [])];
+      const why = d === null && /^3/.test(f.occupancy ?? "") ? "。飲食店は、火を使う設備・器具を設けていれば延べ面積にかかわらず指定防火対象物等に当たる（消火器具の設置が必要なため）" : "";
+      return [v({ ...b, result: miss.length ? "conditional" : "required", reason: `指定防火対象物等の修繕・模様替え・用途変更など（建築確認を受けるものを除く）${why}`, missing: [...new Set(miss)] })];
     }
     case "temp_use":
       return [v({ procedure: "ichiji-shiyo", title: "防火対象物一時使用届", target, result: "required", deadline: "一時的な使用を開始する日の7日前まで", basis: `${T_JO} 第五十六条の三`, reason: "防火対象物を一時的に不特定の者が出入りする店舗等として使う", inspection: "指定防火対象物等なら使用開始前に検査を受ける（同条第3項）" })];

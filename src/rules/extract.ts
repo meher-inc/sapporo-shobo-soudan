@@ -1,10 +1,11 @@
 // 相談文から物件条件と場面を読み取り、判定結果をモデルに渡す「判定メモ」を作る。
 // 読み取りは正規表現だけで行う（LLMに条件を推測させない）。読み取れなかった項目は判定側が「条件次第」にする。
 
-import { EQUIPMENT_LABEL, judge, type Equipment, type Facts, type Verdict } from "./install.ts";
+import { EQUIPMENT_LABEL, judge, occupancyIn, type Equipment, type Facts, type Verdict } from "./install.ts";
 import { judgeFilings, type FilingFacts, type FilingVerdict, type Jurisdiction, type Scene } from "./filings.ts";
 import { asksEquipmentWork, asksFireManagement, nationalFilings } from "./national.ts";
 import { asksInspection } from "./inspection.ts";
+import { MINPAKU, topicFilings } from "./topics.ts";
 
 // 用途の言い換え → 令別表第一の項。曖昧なもの（診療所・老人ホームなど）は細分を決めずに入れない
 const OCCUPANCY_WORDS: [RegExp, string][] = [
@@ -32,15 +33,26 @@ const OCCUPANCY_WORDS: [RegExp, string][] = [
   [/事務所|オフィス|会社|営業所/, "15"],
 ];
 
+// 用途の変更（「物販店として使っていた店舗を飲食店に変えて」）。1つ目のグループは変更後の用途の部分
+const USE_CHANGE = /(?:使って|使用して|営業して)いた[^。]{0,20}?を([^。]{1,20}?)(?:に|へ)(?:変えて|変え(?:ます|る)|変更(?:して|します|する)|転用)/;
+// 厨房設備の設置（「業務用ガスコンロを3台新しく設置」）。調理に使うだけの文（「ガスコンロを使って調理」）は含めない
+const KITCHEN_INSTALL = /厨房設備|厨房機器|フライヤー|業務用[^。]{0,4}コンロ|コンロ[^。]{0,12}(?:設置|新設|増設|入れ替)/;
+// 管理について権原を有する者が複数（統括防火管理者。消防法 第八条の二）
+export const MULTI_TITLE = /管理者が(?:別|異な|違)|管理権原(?:者)?が(?:分かれ|複数|別)|テナントごとに(?:管理|経営|オーナー)|オーナーが(?:別|異な)|統括防火管理/;
+
 const num = (s: string) => Number(s.replace(/[,，]/g, "").normalize("NFKC"));
 
 export function extractFacts(text: string): FilingFacts {
   const t = text.normalize("NFKC");
   const f: FilingFacts = {};
+  // 「物販店として使っていた店舗を飲食店に変えて」: 変更後の用途で判定する（前の用途の語で複合用途にしない）
+  const change = t.match(USE_CHANGE);
+  const useText = change ? change[1] : t;
+  if (change) f.use_change = true;
   const explicit = t.match(/(?<!第\s*)[（(]?(\d{1,2}(?:の[23])?)[)）]?項\s*([イロハニ])?(?:\s*[（(](\d)[)）])?/);
   if (explicit) f.occupancy = `${explicit[1]}${explicit[2] ?? ""}${explicit[3] ? `(${explicit[3]})` : ""}`;
   else {
-    const hits = OCCUPANCY_WORDS.filter(([re]) => re.test(t)).map(([, o]) => o);
+    const hits = OCCUPANCY_WORDS.filter(([re]) => re.test(useText)).map(([, o]) => o);
     const uniq = [...new Set(hits)];
     if (uniq.length === 1) f.occupancy = uniq[0];
     else if (uniq.length > 1) f.occupancy = "16イ"; // 用途が複数 → 複合用途として判定し「条件次第」に倒す
@@ -66,8 +78,19 @@ export function extractFacts(text: string): FilingFacts {
   if (area) f.total_area = num(area[1]) - (area[2] ? 1 : 0);
   const tsubo = !area && t.match(/([\d,]+(?:\.\d+)?)\s*坪/);
   if (tsubo) f.total_area = Math.round(num(tsubo[1]) * 3.30578);
+  // 収容人員の明記がなく、席数と従業員数の両方があれば足す（飲食店などは従業者の数＋固定いす席の数。消防法施行規則 第一条の三）
+  const capStated = /(?:収容人員|定員)\s*(?:は|が)?\s*(?:約)?\s*\d/.test(rest);
+  const seats = rest.match(/([\d,]+)\s*席/);
+  const staff = rest.match(/(?:従業員|従業者|スタッフ)\s*(?:は|が)?\s*(?:約)?\s*([\d,]+)\s*(?:人|名)/);
   const cap = rest.match(/(?:収容人員|定員|従業員|席数|客席)?\s*(?:が|は)?\s*([\d,]+)\s*(?:人|名|席)(\s*未満)?/);
-  if (cap) f.capacity = num(cap[1]) - (cap[2] ? 1 : 0);
+  if (!capStated && seats && staff) {
+    f.capacity = num(seats[1]) + num(staff[1]);
+    f.capacity_label = `${f.capacity}人（席${num(seats[1])}＋従業員${num(staff[1])}）`;
+  } else if (cap) {
+    f.capacity = num(cap[1]) - (cap[2] ? 1 : 0);
+    // 「100人未満」は判定では99人として扱うが、メモには相談者の言い方で出す
+    if (cap[2]) f.capacity_below = num(cap[1]);
+  }
   if (/平屋/.test(t)) f.floors_above = 1;
   const floors = t.match(/(?:地上)?\s*(\d{1,2})\s*階建/);
   if (floors) f.floors_above = num(floors[1]);
@@ -81,13 +104,14 @@ export function extractFacts(text: string): FilingFacts {
   if (/上方(に|へ)?排気/.test(t)) f.exhaust_down = false;
   if (/(コンロ|フライヤー|ガス|火を使|調理|厨房|かまど|グリル)/.test(t)) f.fire_use = true;
   if (/火を使わない|IHのみ|電気調理のみ/.test(t)) f.fire_use = false;
-  if (/厨房設備|厨房機器|フライヤー|業務用コンロ/.test(t)) f.facility = "kitchen";
+  if (KITCHEN_INSTALL.test(t)) f.facility = "kitchen";
   else if (/サウナ設備|サウナを設置|サウナを置|テントサウナ/.test(t)) f.facility = "sauna";
   else if (/蓄電池/.test(t)) f.facility = "battery";
   else if (/ボイラー/.test(t)) f.facility = "boiler";
+  if (/発電機|発電設備/.test(t)) f.generator = true;
   if (/自宅|個人の住居|住宅に/.test(t)) f.residence = true;
   if (/事業所|店舗|施設|会社/.test(t) && f.residence === undefined) f.residence = false;
-  if (/建築確認(を|は)?受け(ない|ません|ず)|確認申請(は|を)?(しない|しません|不要|出さない)/.test(t)) f.building_permit = false;
+  if (/建築確認(を|は|が|の)?(受け(ない|ません|ず)|要らない|いらない|不要|必要(が|は)?(ない|ありません)|要しない|なし|無し)|確認申請(は|を|が)?(しない|しません|不要|出さない|要らない|いらない|必要(が|は)?(ない|ありません))/.test(t)) f.building_permit = false;
   else if (/建築確認|確認申請/.test(t)) f.building_permit = true;
   if (/露店|屋台|出店/.test(t)) f.stall_fire = /コンロ|火|ガス|炭|鉄板|発電機|焼き|焼く|焼いて|揚げ|炒め|煮る|煮て|茹で|ゆで|炊く|炊いて|フライヤー|調理/.test(t) ? true : undefined;
   if (/展示場|観覧場|イベントホール|展示会場/.test(t)) f.exhibition_hall = true;
@@ -98,6 +122,13 @@ export function extractFacts(text: string): FilingFacts {
   // 危険物の数量（リットル）→ 指定数量の倍数（危険物の規制に関する政令 別表第三）。品名の違う危険物は倍数を足す（消防法 第十条第二項）
   const ratio = hazmatRatio(t);
   if (ratio !== undefined) f.hazmat_ratio = ratio;
+  if (MULTI_TITLE.test(t)) f.multi_title = true;
+  const pub = t.match(/客席(?:部分)?の?(?:床)?面積(?:は|が)?\s*(?:約)?\s*([\d,]+(?:\.\d+)?)\s*(?:㎡|m2|m²|平米|平方メートル)/);
+  if (pub) {
+    f.public_area = num(pub[1]);
+    // 客席の面積だけが書かれているときは、延べ面積として読まない
+    if (area && area.index !== undefined && pub.index !== undefined && Math.abs(area.index - pub.index) <= pub[0].length) delete f.total_area;
+  }
   if (/[2２二]つの区|複数の区|区をまたが|2以上の区/.test(t)) f.multi_ward = true;
   if (/準耐火建築物/.test(t)) f.building_class = "quasi_fireproof";
   else if (/耐火建築物/.test(t)) f.building_class = "fireproof";
@@ -111,10 +142,10 @@ export function extractFacts(text: string): FilingFacts {
 export function detectScenes(text: string): Scene[] {
   const t = text.normalize("NFKC");
   const s: Scene[] = [];
-  if (/使用開始|開業|開店|開設|開所|開園|オープン|入居|使い始め|営業を始め|テナントに入/.test(t)) s.push("use_start");
+  if (/使用開始|開業|開店|開設|開所|開園|オープン|入居|使い始め|営業を始め|テナントに入/.test(t) || USE_CHANGE.test(t)) s.push("use_start");
   if (/模様替|改装|内装工事|改修|リフォーム|用途変更|間取り|増築/.test(t)) s.push("renovation");
   if (/ポップアップ|一時的|期間限定|短期間/.test(t) && !/展示場|観覧場/.test(t)) s.push("temp_use");
-  if (/厨房設備|厨房機器|フライヤー|業務用コンロ|サウナ設備|サウナを設置|サウナを置|蓄電池|ボイラー|火気使用設備|火を使う設備/.test(t)) s.push("fire_equipment");
+  if (KITCHEN_INSTALL.test(t) || /サウナ設備|サウナを設置|サウナを置|蓄電池|ボイラー|発電機|発電設備|火気使用設備|火を使う設備/.test(t)) s.push("fire_equipment");
   if (/少量危険物|指定可燃物|危険物を?(貯蔵|保管|置|ため)|危険物を取り?扱/.test(t) || hazmatRatio(t) !== undefined) s.push("small_hazmat");
   if (/露店|屋台|出店/.test(t)) s.push("stall");
   if (/催し|催物|イベント|展示会|コンサート/.test(t) && !s.includes("stall")) s.push("event");
@@ -185,6 +216,7 @@ const MISSING_JA: Record<string, string> = {
   height: "建物の高さ",
   personal_use: "個人的な使用か（人に使わせるか）",
   facility: "設ける設備の種類",
+  public_area: "客席など公衆の出入りする部分の床面積",
 };
 
 const line = (label: string, r: Verdict | FilingVerdict, extra = "") =>
@@ -192,7 +224,7 @@ const line = (label: string, r: Verdict | FilingVerdict, extra = "") =>
     r.missing.length ? `。足りない情報: ${[...new Set(r.missing)].map((m) => MISSING_JA[m] ?? m).join("、")}` : ""
   }${"assertive" in r && !r.assertive && r.result === "required" && r.caveats.length ? `。除外・例外（「原則として必要」と書き、これに触れる）: ${r.caveats[0]}` : ""}`;
 
-export type RulesResult = { facts: FilingFacts; scenes: Scene[]; install: Verdict[]; filings: FilingVerdict[]; asked: Equipment[] };
+export type RulesResult = { facts: FilingFacts; scenes: Scene[]; install: Verdict[]; filings: FilingVerdict[]; asked: Equipment[]; notes: string[] };
 
 /** 会話中の利用者の発言（古い順）から判定する。後の発言の値を優先する */
 export function runRules(jurisdiction: Jurisdiction, userTexts: string[]): RulesResult | null {
@@ -200,7 +232,29 @@ export function runRules(jurisdiction: Jurisdiction, userTexts: string[]): Rules
   for (const t of userTexts) Object.assign(facts, Object.fromEntries(Object.entries(extractFacts(t)).filter(([, v]) => v !== undefined)));
   const latest = userTexts.at(-1) ?? "";
   const scenes = detectScenes(latest).length ? detectScenes(latest) : detectScenes(userTexts.join("\n"));
-  if (!facts.occupancy && !scenes.length && !asksFireManagement(latest) && !asksEquipmentWork(latest) && !asksInspection(latest)) return null;
+  const topical = facts.multi_title || MINPAKU.test(latest.normalize("NFKC")) || facts.public_area !== undefined;
+  if (!facts.occupancy && !scenes.length && !topical && !asksFireManagement(latest) && !asksEquipmentWork(latest) && !asksInspection(latest)) return null;
+  const below = facts.capacity_below;
+  if (below === undefined) return judgeAll(jurisdiction, facts, scenes, latest, userTexts);
+  // 「100人未満」: 0〜99人のどこでも結論が同じ項目はそのまま、変わる項目は収容人員を不明として判定し直す
+  const hi = judgeAll(jurisdiction, facts, scenes, latest, userTexts);
+  const lo = judgeAll(jurisdiction, { ...facts, capacity: 1 }, scenes, latest, userTexts);
+  const un = judgeAll(jurisdiction, { ...facts, capacity: undefined }, scenes, latest, userTexts);
+  const keyI = (x: Verdict) => x.equipment;
+  const keyF = (x: FilingVerdict) => `${x.procedure}:${x.title}`;
+  const pick = <T extends Verdict | FilingVerdict>(x: T, los: T[], uns: T[], key: (y: T) => string): T => {
+    const l = los.find((y) => key(y) === key(x));
+    if (l && l.result === x.result) return x;
+    return uns.find((y) => key(y) === key(x)) ?? { ...x, result: "conditional", missing: [...x.missing, "capacity"] };
+  };
+  return {
+    ...hi,
+    install: hi.install.map((x) => pick(x, lo.install, un.install, keyI)),
+    filings: hi.filings.map((x) => pick(x, lo.filings, un.filings, keyF)),
+  };
+}
+
+function judgeAll(jurisdiction: Jurisdiction, facts: FilingFacts, scenes: Scene[], latest: string, userTexts: string[]): RulesResult {
   const asked = askedEquipment(latest);
   const j = (e: Equipment) => judge(e, facts as Facts, jurisdiction);
   const install = facts.occupancy
@@ -211,8 +265,24 @@ export function runRules(jurisdiction: Jurisdiction, userTexts: string[]): Rules
         ...INSTALL_LARGE.filter((e) => !asked.includes(e)).map(j).filter((v) => v.result === "required"),
       ]
     : [];
-  const filings = [...scenes.flatMap((s) => judgeFilings(jurisdiction, s, facts)), ...nationalFilings(scenes, facts, install, latest, asked)];
-  return { facts, scenes, install, filings, asked: facts.occupancy ? asked : [] };
+  const filings = [...scenes.flatMap((s) => judgeFilings(jurisdiction, s, facts)), ...nationalFilings(scenes, facts, install, latest, asked), ...topicFilings(jurisdiction, latest, facts)];
+  return { facts, scenes, install, filings, asked: facts.occupancy ? asked : [], notes: notesFor(facts, userTexts) };
+}
+
+// 結論を左右する前提を、モデルが言い換えたり別の値で書いたりしないように明記する
+function notesFor(f: FilingFacts, userTexts: string[]): string[] {
+  const notes: string[] = [];
+  const items = userTexts.flatMap((t) => hazmatItems(t));
+  if (items.length && f.hazmat_ratio !== undefined) {
+    const calc = items.map((x) => `${x.name}${x.liters.toLocaleString("ja-JP")}L ÷ 指定数量${x.unit.toLocaleString("ja-JP")}L`).join(" ＋ ");
+    const r = f.hazmat_ratio;
+    const exact = r === 0.2 ? "。ちょうど5分の1は「5分の1以上」に含まれる" : r === 0.5 ? "。ちょうど2分の1は「2分の1以上」に含まれる" : "";
+    notes.push(`危険物の量: ${calc} ＝ 指定数量の${r}倍${exact}（危険物の規制に関する政令 別表第三）。指定数量はこの値で書き、別の値を書かない。届出の要否は上の判定のとおり`);
+  }
+  if (f.use_change && f.occupancy && occupancyIn(f.occupancy, ["1", "2", "3", "4", "5イ", "6", "9イ", "16イ", "16の2", "16の3"]) === true)
+    notes.push("用途を変えて特定用途（飲食店・物品販売店舗など）として使う場合、消防用設備等は変更後の用途の基準がすべて適用され、前の用途のときの基準のままにする特例は使えない（消防法 第十七条の三第二項第四号）。使用開始（変更）の届出も要る");
+  if (f.capacity_label) notes.push(`収容人員は ${f.capacity_label} として判定した（従業者の数＋固定いす席の数。消防法施行規則 第一条の三）`);
+  return notes;
 }
 
 export function rulesNote(r: RulesResult): string {
@@ -224,12 +294,16 @@ export function rulesNote(r: RulesResult): string {
   const cond = [
     f.occupancy && `用途 令別表第一${f.occupancy.replace(/^(\d{1,2}(?:の[23])?)(.*)$/, "($1)項$2")}`,
     f.total_area !== undefined && `延べ面積 ${f.total_area}㎡`,
-    f.capacity !== undefined && `収容人員 ${f.capacity}人`,
+    f.capacity_below !== undefined ? `収容人員 ${f.capacity_below}人未満` : f.capacity !== undefined && `収容人員 ${f.capacity}人`,
     f.floors_above !== undefined && `地上${f.floors_above}階`,
     f.floor !== undefined && `相談の階 ${f.floor < 0 ? `地下${-f.floor}` : f.floor}階${f.floor_capacity !== undefined ? `（収容人員${f.floor_capacity}人）` : ""}${f.floor_area !== undefined ? `（床面積${f.floor_area}㎡）` : ""}`,
     f.kitchen_kw !== undefined && `厨房設備の入力 ${f.kitchen_kw}kW`,
   ].filter(Boolean);
   if (cond.length) out.push(`読み取った条件: ${cond.join("、")}`);
+  if (r.notes.length) {
+    out.push("## 判定の前提（このとおりに書く）");
+    for (const n of r.notes) out.push(`- ${n}`);
+  }
   if (r.filings.length) {
     out.push("## 届出");
     for (const x of r.filings)
@@ -248,7 +322,9 @@ export function rulesNote(r: RulesResult): string {
     for (const x of others) out.push(fmt(x));
     out.push("総務省令の除外・令第32条の特例はこの判定に含まれていません（条例の上乗せは、判定に入っている管轄だけ根拠欄に条例を示しています）。最終的な判断は所轄の消防署が行う旨は、締めくくりの一文（トドケデで作り、出す前に消防署で確認）に含めれば足ります。");
   }
-  return out.join("\n");
+  const text = out.join("\n");
+  // 「100人未満」を99人と書かせない
+  return f.capacity_below !== undefined ? text.replaceAll(`収容人員${f.capacity_below - 1}人`, `収容人員${f.capacity_below}人未満`) : text;
 }
 
 // 危険物の規制に関する政令 別表第三の指定数量（リットル）。品名の判断が分かれる物（シンナー・潤滑油など）は入れない
@@ -265,20 +341,25 @@ const CONTAINER_L: Record<string, number> = { ドラム缶: 200, 一斗缶: 18 }
 
 /** 文中の危険物の量を指定数量の倍数にして合計する。量が読めなければ undefined */
 export function hazmatRatio(text: string): number | undefined {
+  const items = hazmatItems(text);
+  if (!items.length) return undefined;
+  return Math.round(items.reduce((s, x) => s + x.liters / x.unit, 0) * 1000) / 1000;
+}
+
+/** 文中の危険物（品名・リットル・指定数量） */
+export function hazmatItems(text: string): { name: string; liters: number; unit: number }[] {
   const t = text.normalize("NFKC").replace(/,/g, "");
   const names = HAZMAT_LITERS.map(([re]) => re.source).join("|");
   const amount = "(\\d+(?:\\.\\d+)?)\\s*(?:L|ℓ|リットル)";
   const container = "(ドラム缶|一斗缶)\\s*(\\d+)\\s*(?:本|缶|個)";
   const re = new RegExp(`(${names})[^\\d。、]{0,8}(?:${amount}|${container})|${amount}の?(${names})|(${names})の(ドラム缶|一斗缶)\\s*(\\d+)\\s*(?:本|缶|個)`, "gi");
-  let sum = 0;
-  let hit = false;
+  const items: { name: string; liters: number; unit: number }[] = [];
   for (const m of t.matchAll(re)) {
     const name = m[1] ?? m[6] ?? m[7];
     const liters = m[2] ? Number(m[2]) : m[3] ? CONTAINER_L[m[3]] * Number(m[4]) : m[5] ? Number(m[5]) : CONTAINER_L[m[8]] * Number(m[9]);
     const unit = HAZMAT_LITERS.find(([r]) => r.test(name))?.[1];
     if (!unit || !Number.isFinite(liters)) continue;
-    sum += liters / unit;
-    hit = true;
+    items.push({ name, liters, unit });
   }
-  return hit ? Math.round(sum * 1000) / 1000 : undefined;
+  return items;
 }

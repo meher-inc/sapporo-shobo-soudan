@@ -30,6 +30,12 @@ export type FilingFacts = Partial<Facts> & {
   personal_use?: boolean; // 設ける人が個人的に使う（横浜市 74条5号の2 など）
   hazmat_ratio?: number; // 危険物の数量が指定数量の何倍か
   multi_ward?: boolean; // 断水の区域が2以上の消防署の管轄にわたる（横浜市 75条ただし書）
+  use_change?: boolean; // 前の用途から変えて使う（「物販店を飲食店に変える」）
+  capacity_label?: string; // 収容人員を相談者の言い方で書くとき（席数＋従業員数の合算など）
+  capacity_below?: number; // 「100人未満」の100
+  generator?: boolean; // 発電機・発電設備を設ける
+  multi_title?: boolean; // 管理について権原を有する者が複数
+  public_area?: number; // 客席など公衆の出入りする部分の床面積（㎡）
 };
 
 export type FilingVerdict = {
