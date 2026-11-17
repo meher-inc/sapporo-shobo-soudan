@@ -30,9 +30,13 @@ export function stripEchoes(text: string, a: AnswerActions = { buttons: [] }): s
   const onlyLabels = new RegExp(`^(?:\\s*(?:[-*・•]|\\d+[.)])?\\s*[[「【(（]?\\s*(?:${alt})\\s*[\\]」】)）]?\\s*[、,/／|｜]?)+\\s*$`);
   return text
     .split("\n")
+    // モデルがボタンを <button> タグで書いたときは、タグを外してから判定する
+    .map((line) => line.replace(/<\/?button[^>]*>/gi, ""))
     .filter((line) => !(line.trim() && onlyLabels.test(line)))
     // ボタン・選択肢を並べる代わりにモデルが書く、改行タグだけの行も消す
     .filter((line) => !/^\s*(?:<br\s*\/?>\s*)+$/i.test(line))
+    // 区切りや強調の記号だけの行（「***」「---」「**」）も消す
+    .filter((line) => !/^\s*(?:\*{2,}|-{3,}|_{3,})\s*$/.test(line))
     // 作成ツールのボタンが出ている回答では「確認先：…」の行を出さない（確認は締めくくりの一文で案内している）
     .filter((line) => !a.buttons.some((b) => "kind" in b && b.kind === "link") || !/^\s*(?:[-*・•]\s*)?\**確認先\**\s*[:：]/.test(line))
     // 作成ツールのボタンが出ていない回答では、作成ツールへの案内の行を消す

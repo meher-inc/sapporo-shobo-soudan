@@ -6,7 +6,7 @@
 //   防火対象物の定期点検報告: 消防法 第八条の二の二（防火対象物点検資格者に点検させて報告。法第八条の二の三の認定を受けたものは適用しない）、
 //                           消防法施行令 第四条の二の二（特定用途で収容人員300人以上、又は特定用途が避難階以外の階にあり直通階段が1つ）、
 //                           消防法施行規則 第四条の二の四（1年に1回）
-import { occupancyIn } from "./install.ts";
+import { judge, occupancyIn, type Facts } from "./install.ts";
 import { v, type FilingFacts, type FilingVerdict } from "./filing-base.ts";
 
 const TARGET = "消防長又は消防署長";
@@ -98,10 +98,15 @@ export function fireSafetyInspection(f: FilingFacts): FilingVerdict[] {
   if (use === false) return [v({ ...base, result: "not_required", reason: "防火対象物点検の対象は特定用途の防火対象物だけ（消防法施行令 第四条の二の二）" })];
   if (use === null) return [v({ ...base, result: "conditional", reason: "用途の細分が分からない", missing: ["occupancy"] })];
   if (f.capacity !== undefined && f.capacity >= 300) return [v({ ...base, result: "required", reason: `特定用途の防火対象物で収容人員${f.capacity}人（300人以上、令第四条の二の二第一号）`, caveats })];
+  // 対象は防火管理者を定める防火対象物（法第八条第一項）に限られる（法第八条の二の二第一項）。
+  // 令第四条の二の二第二号には人数の下限がないが、令第一条の二第三項で収容人員30人以上（(6)項ロを含む建物は10人以上）が前提になる（2026-11-17 e-Gov で確認）
+  const fm = judge("fire_manager", f as Facts);
+  if (fm.result === "not_required") return [v({ ...base, result: "not_required", reason: `防火管理者を定める防火対象物に当たらない（${fm.reason}）。防火対象物点検は防火管理者を定める防火対象物が対象（法第八条の二の二第一項）` })];
   const stair = upperSingleStair(f);
-  if (stair.hit === true) return [v({ ...base, result: "required", reason: "特定用途の部分が避難階以外の階（3階以上又は地階）にあり、直通階段が1つ（令第四条の二の二第二号。屋外階段・避難上有効な構造なら除く）", caveats })];
-  const missing = [...(f.capacity === undefined ? ["capacity"] : []), ...stair.missing];
-  if (missing.length) return [v({ ...base, result: "conditional", reason: "収容人員300人以上か、特定用途の部分が3階以上又は地階にあり直通階段が1つなら対象（令第四条の二の二）", missing, caveats })];
+  const STAIR = "特定用途の部分が避難階以外の階（3階以上又は地階）にあり、直通階段が1つ（令第四条の二の二第二号。屋外階段・避難上有効な構造なら除く）";
+  if (stair.hit === true && fm.result === "required") return [v({ ...base, result: "required", reason: `${STAIR}で、防火管理者を定める規模（${fm.reason}）`, caveats })];
+  const missing = [...new Set([...(f.capacity === undefined ? ["capacity"] : []), ...stair.missing, ...(fm.result === "conditional" ? fm.missing : [])])];
+  if (missing.length) return [v({ ...base, result: "conditional", reason: "収容人員300人以上か、特定用途の部分が3階以上又は地階にあり直通階段が1つで、収容人員30人以上（(6)項ロを含む建物は10人以上）なら対象（法第八条の二の二第一項、令第四条の二の二）", missing, caveats })];
   return [v({ ...base, result: "not_required", reason: `収容人員${f.capacity}人（300人未満）で、特定用途の部分が上の階で直通階段1つの建物にも当たらない` })];
 }
 
@@ -109,7 +114,7 @@ export function fireSafetyInspection(f: FilingFacts): FilingVerdict[] {
 export function inspectionFilings(f: FilingFacts, latest: string): FilingVerdict[] {
   if (!asksInspection(latest)) return [];
   const t = latest.normalize("NFKC");
-  const onlyFire = /防火対象物(定期)?点検|防火セイフティマーク|特例認定/.test(t) && !/設備/.test(t);
-  const onlyEquip = /設備/.test(t) && /点検/.test(t) && !/防火対象物(定期)?点検/.test(t);
+  const onlyFire = /防火対象物の?(定期)?点検|防火セイフティマーク|特例認定/.test(t) && !/設備/.test(t);
+  const onlyEquip = /設備/.test(t) && /点検/.test(t) && !/防火対象物の?(定期)?点検/.test(t);
   return [...(onlyFire ? [] : equipmentInspection(f)), ...(onlyEquip ? [] : fireSafetyInspection(f))];
 }

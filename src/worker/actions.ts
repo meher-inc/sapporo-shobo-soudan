@@ -3,7 +3,7 @@
 
 import { STATIONS } from "../config/stations.ts";
 import { SERVICE } from "../config/service.ts";
-import { missingForQuestion, type RulesResult } from "../rules/extract.ts";
+import { missingForQuestion, textQuestion, type RulesResult } from "../rules/extract.ts";
 import type { Lane } from "./escalation.ts";
 
 /** 押すと開くボタン。kind=tel は電話をかける。kind=request はその場で行政書士への依頼カードを開く（href は使わない） */
@@ -13,7 +13,8 @@ export type GyoseiReceiver = "要確認" | "あり" | "なし";
 /** 押すとその文を送る選択肢。text が空のものは入力欄を開く（「その他」） */
 export type ReplyChip = { label: string; text: string };
 /** question.topic は計測（condition_answered）の prop に使う質問の名前 */
-export type Actions = { buttons: ActionButton[]; question?: { topic: string; text: string; options: ReplyChip[] } };
+/** ask は、選択肢で聞けない足りない項目（入力の合計など）。選択肢を出さず、モデルに本文で1つ聞かせる */
+export type Actions = { buttons: ActionButton[]; ask?: string; question?: { topic: string; text: string; options: ReplyChip[] } };
 
 const UTM = "utm_source=todokede_ai&utm_medium=answer_button";
 export const DOCS_URL = `https://docs.todokede.jp/?${UTM}`;
@@ -129,9 +130,11 @@ export function buildActions(input: {
   const missing = missingForQuestion(rules);
   const answered = userTexts.join("\n");
   const key = lane === "setsubi" ? undefined : missing.find((k): k is (typeof ORDER)[number] => (ORDER as readonly string[]).includes(k) && !(TOPIC[k] && answered.includes(`${TOPIC[k]}はわかりません`)));
+  // 選択肢で聞けない設備の値（入力の合計など）が判定に足りないときは、選択肢を出さずに本文で1つ聞かせる（src/rules/extract.ts の textQuestion）（「わからない」と答えた後は聞かない）
+  const ask = !key && lane !== "setsubi" && !/わから|分から|わかりませ|分かりませ|不明/.test(latest) ? textQuestion(missing) : undefined;
   if (key) return { buttons, question: { topic: key, ...QUESTIONS[key] } };
   // 用途まで分かっていて区が分からないときは、提出先の消防署を決めるために区を聞く
-  if (WARD_STATIONS.length && !station && (filings.length || rules?.install.length))
+  if (WARD_STATIONS.length && !station && !ask && (filings.length || rules?.install.length))
     return {
       buttons,
       question: {
@@ -140,7 +143,7 @@ export function buildActions(input: {
         options: WARD_STATIONS.map((s) => ({ label: s.ward, text: `建物は${s.ward}にあります。` })),
       },
     };
-  return { buttons };
+  return ask ? { buttons, ask } : { buttons };
 }
 
 /** モデルに渡す、画面に出るボタンの説明。URL・電話番号を本文に重ねて書かせない */
@@ -157,7 +160,9 @@ export function actionsNote(a: Actions): string {
     out.push("この回答の下に作成ツールのボタンは出ません。作成ツールには触れず、名前・URL・「下のボタンから作れます」のような案内を書かないでください。");
   if (a.question)
     out.push(`この回答の下に「${a.question.text}」の選択肢（${a.question.options.map((o) => o.label).join("／")}）が表示されます。相談者への質問はこの1つだけにし、回答の最後に1文で短く聞いてください。選択肢は画面にボタンで出るので、本文に並べたり [ ] で囲んで書いたりしないでください。ほかの質問はしないでください。`);
+  else if (a.ask) out.push(`判定に「${a.ask}」が足りません。回答の最後に、これを相談者に1文で質問してください。ほかの質問はしないでください。`);
   else out.push("情報が足りないときの質問は1つだけにしてください。");
+  out.push("書類の作成や行政書士への依頼について、「任せる」「お任せ」という言い方はしないでください（「行政書士に依頼する」と書く）。");
   out.push("むずかしい言葉は避け、中学生にも分かる言葉で、短く書いてください。");
   return out.join("\n");
 }

@@ -299,22 +299,35 @@ function notesFor(f: FilingFacts, userTexts: string[]): string[] {
  * 聞かれた設備の不足は判定の条文の順（消火器なら火を使うかが先）。届出・全体の不足は、これまでどおり用途→延べ面積→収容人員→階数→火を使うかの順。
  * 用途が不明なら用途を最初に聞く。返した項目に選択肢で答えられるものが無ければ、画面の選択肢は出さず、モデルが文で1つ聞く
  */
+const INSPECTION_PROCEDURES = ["setsubi-tenken", "boka-tenken"];
 const QUESTION_ORDER = ["occupancy", "total_area", "capacity", "floors_above", "fire_use"]; // src/worker/actions.ts の ORDER と同じ順
 export function missingForQuestion(r: RulesResult | null): string[] {
   const head = r?.facts.occupancy ? [] : ["occupancy"];
   if (!r) return head;
   const asked = r.install.filter((v) => r.asked.includes(v.equipment)).flatMap((v) => v.missing);
   if (asked.length) return [...new Set([...head, ...asked])];
-  const rest = (r.filings.some((v) => v.missing.length) ? r.filings : [...r.install, ...r.filings]).flatMap((v) => v.missing);
+  // 点検報告を聞かれたときは、点検の判定に足りない項目から（点検の判定は点検を聞いたときだけ出る）
+  const inspection = r.filings.filter((v) => INSPECTION_PROCEDURES.includes(v.procedure));
+  const rest = (inspection.some((v) => v.missing.length) ? inspection : r.filings.some((v) => v.missing.length) ? r.filings : [...r.install, ...r.filings]).flatMap((v) => v.missing);
   const rank = (k: string) => (QUESTION_ORDER.includes(k) ? QUESTION_ORDER.indexOf(k) : QUESTION_ORDER.length);
   return [...new Set([...head, ...[...new Set(rest)].sort((a, b) => rank(a) - rank(b))])];
 }
+
+/** 判定に足りない項目の、相談者に聞くときの言い方（「同じ厨房室の厨房設備の入力の合計（kW）」など） */
+export const missingLabel = (k: string) => MISSING_JA[k] ?? k;
+// 選択肢では聞けないが、届出の決め手になり相談者が答えられる設備の値。足りないときは本文で1つ聞かせる（建物の構造・階段などは選択肢と区の質問に任せる）
+const TEXT_QUESTION = ["kitchen_kw", "battery_kwh", "has_duct", "exhaust_down", "facility"];
+/** 本文で聞かせる項目の言い方。該当がなければ undefined */
+export const textQuestion = (missing: string[]) => {
+  const k = missing.find((m) => TEXT_QUESTION.includes(m));
+  return k ? missingLabel(k) : undefined;
+};
 
 export function rulesNote(r: RulesResult): string {
   const out = ["# ルールによる判定結果（この回答の結論はこれに従う）"];
   out.push("相談文から読み取った条件を条文にあてはめて、機械的に判定した目安です。結論の区分（必要／不要／条件次第）と期限・提出先・様式はこのとおりに書き、逆の結論や別の区分にしないでください。それぞれの結論に根拠の条文を添えてください。");
   out.push("「条件次第」の項目は断定せず、足りない情報は1つだけ質問してください（画面に選択肢が出るときはそれに合わせる）。面積や人数は、相談者が書いた言い方（「150㎡未満」など）のまま書き、読み取った数値に言い換えないでください。読み取った条件が相談内容と違う場合は、そのことを伝えて確認してください。");
-  out.push("答え方: 相談者が聞いた設備・届出の結論と根拠を最初に書きます。結論は「〜にあたるため、◯◯が必要になる目安です」「〜にあたらないため、◯◯は不要となる目安です」の形で書き、「必ず必要です」「確実に不要です」のような言い切りの語は使わないでください。条文の条件（「地階・無窓階」は地階又は無窓階）を言い換えないでください。聞かれていない項目は「必要」のものを一文ずつ、「条件次第」のものはまとめて一文で触れ、「不要」の項目は省きます。回答の最後に「最終的な要否は、所轄の消防署でご確認ください」という趣旨の文を1文入れてください（締めくくりの1文に含めてもかまいません）。このメモの見出しや箇条書きをそのまま写さず、相談者に向けた文章にしてください。");
+  out.push("答え方: 相談者が聞いた設備・届出の結論と根拠を最初に書きます。結論は「〜にあたるため、◯◯が必要になる目安です」「〜にあたらないため、◯◯は不要となる目安です」の形で書き、「必ず必要です」「確実に不要です」のような言い切りの語は使わないでください。条文の条件（「地階・無窓階」は地階又は無窓階）を言い換えないでください。聞かれていない項目は「必要」のものを一文ずつ、「条件次第」のものは、項目ごとに何で決まるか（足りない情報）を取り違えずに添えて短く触れ、「不要」の項目は省きます。回答の最後に「最終的な要否は、所轄の消防署でご確認ください」という趣旨の文を1文入れてください（締めくくりの1文に含めてもかまいません）。このメモの見出しや箇条書きをそのまま写さず、相談者に向けた文章にしてください。");
   const f = r.facts;
   const cond = [
     f.occupancy && `用途 令別表第一${f.occupancy.replace(/^(\d{1,2}(?:の[23])?)(.*)$/, "($1)項$2")}`,
