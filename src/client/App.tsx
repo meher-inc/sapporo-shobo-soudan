@@ -17,7 +17,7 @@ import {
 } from "./api";
 import { SERVICE } from "../config/service";
 import { renderMarkdown } from "./markdown";
-import { stripEchoes } from "./echo";
+import { stripEchoes, withClosing } from "./echo";
 import { conditionProp, trackEvent } from "./events";
 import { Sheet } from "./components/Sheet";
 import { Hearing } from "./components/Hearing";
@@ -363,7 +363,7 @@ export function App({ initialMe }: { initialMe: Me }) {
     const cached = html.get(m.id + m.content.length);
     if (cached) return cached;
     // 画面のボタン・選択肢と同じ文言を本文に重ねて出さない
-    const out = renderMarkdown(stripEchoes(m.content, m.actions));
+    const out = renderMarkdown(withClosing(stripEchoes(m.content, m.actions), m.actions));
     html.set(m.id + m.content.length, out);
     return out;
   };
