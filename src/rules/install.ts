@@ -160,7 +160,7 @@ function fireManager({ o, f }: Ctx): Verdict {
   if (inList(o, ["6ロ"])) threshold = 10;
   else if (inList(o, ["16イ", "16の2"])) {
     return verdict(e, f.capacity === undefined ? "conditional" : f.capacity >= 30 ? "required" : f.capacity >= 10 ? "conditional" : "not_required", b,
-      "(6)項ロの用途の部分があれば収容人員10人以上、なければ30人以上で必要",
+      "収容人員30人以上で必要（建物に(6)項ロ（要介護者が入所する施設など）の部分がある場合だけ10人以上）",
       { missing: f.capacity === undefined ? ["capacity"] : [], caveats: ["(6)項ロ（要介護の入所施設など）の部分があるかで基準が変わる"] });
   } else if (inList(o, ["1", "2", "3", "4", "5イ", "6イ", "6ハ", "6ニ", "9イ"])) threshold = 30;
   else if (inList(o, ["5ロ", "7", "8", "9ロ", ...range(10, 15), "16ロ", "17"])) threshold = 50;
