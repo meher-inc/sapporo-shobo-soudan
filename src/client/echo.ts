@@ -22,6 +22,11 @@ function trimSentences(line: string, a: AnswerActions): string | null {
   return rest ? pre + rest : null;
 }
 
+// 選択肢を JSON で書いたコードブロック（「"choices": [...]」など）。画面に選択肢が出るので本文からは消す
+const CHOICE_JSON = /```[a-z]*\s*\{[\s\S]*?"(?:choices|options|action)"[\s\S]*?(?:```|$)/gi;
+// 「（選択肢ボタン：飲食店／物販）」のように、前置きを付けて選択肢・ボタン名を並べた行
+const LABEL_PREFIX = /^\s*[（(【[]?\s*(?:選択肢(?:ボタン)?|ボタン)\s*[：:]\s*(.*?)\s*[）)】\]]?\s*$/;
+
 export function stripEchoes(text: string, a: AnswerActions = { buttons: [] }): string {
   const labels = new Set([...TOOL_LABELS, ...a.buttons.flatMap((b) => [b.label, ...("sub" in b && b.sub ? [b.sub] : [])]), ...(a.question ? [a.question.text, ...a.question.options.map((o) => o.label)] : [])]);
   const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,10 +34,15 @@ export function stripEchoes(text: string, a: AnswerActions = { buttons: [] }): s
   // 行の中身が、ボタン名・選択肢（括弧や箇条書きの記号、区切りを含む）だけでできていれば消す
   const onlyLabels = new RegExp(`^(?:\\s*(?:[-*・•]|\\d+[.)])?\\s*[[「【(（]?\\s*(?:${alt})\\s*[\\]」】)）]?\\s*[、,/／|｜]?)+\\s*$`);
   return text
+    .replace(CHOICE_JSON, "")
     .split("\n")
     // モデルがボタンを <button> タグで書いたときは、タグを外してから判定する
     .map((line) => line.replace(/<\/?button[^>]*>/gi, ""))
     .filter((line) => !(line.trim() && onlyLabels.test(line)))
+    .filter((line) => {
+      const m = line.match(LABEL_PREFIX);
+      return !(m && m[1].trim() && onlyLabels.test(m[1]));
+    })
     // ボタン・選択肢を並べる代わりにモデルが書く、改行タグだけの行も消す
     .filter((line) => !/^\s*(?:<br\s*\/?>\s*)+$/i.test(line))
     // 区切りや強調の記号だけの行（「***」「---」「**」）も消す
