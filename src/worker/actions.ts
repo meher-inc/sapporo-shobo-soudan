@@ -3,7 +3,7 @@
 
 import { STATIONS } from "../config/stations.ts";
 import { SERVICE } from "../config/service.ts";
-import type { RulesResult } from "../rules/extract.ts";
+import { missingForQuestion, type RulesResult } from "../rules/extract.ts";
 import type { Lane } from "./escalation.ts";
 
 /** 押すと開くボタン。kind=tel は電話をかける。kind=request はその場で行政書士への依頼カードを開く（href は使わない） */
@@ -125,11 +125,10 @@ export function buildActions(input: {
   const station = findStation(userTexts);
   if (station) buttons.push({ kind: "tel", label: `${station.name}に電話する`, href: `tel:${station.tel.replace(/[^\d]/g, "")}`, sub: station.tel });
 
-  // 次に聞くことは1つだけ。判定に足りない項目のうち、選択肢で答えられるものを優先順に選ぶ
-  const missing = new Set<string>([...(rules?.install ?? []), ...(rules?.filings ?? [])].flatMap((v) => v.missing));
-  if (!rules?.facts.occupancy) missing.add("occupancy");
+  // 次に聞くことは1つだけ。聞かれた項目の判定に足りない項目のうち、選択肢で答えられるものを優先順に選ぶ（src/rules/extract.ts）
+  const missing = missingForQuestion(rules);
   const answered = userTexts.join("\n");
-  const key = lane === "setsubi" ? undefined : ORDER.find((k) => missing.has(k) && !(TOPIC[k] && answered.includes(`${TOPIC[k]}はわかりません`)));
+  const key = lane === "setsubi" ? undefined : missing.find((k): k is (typeof ORDER)[number] => (ORDER as readonly string[]).includes(k) && !(TOPIC[k] && answered.includes(`${TOPIC[k]}はわかりません`)));
   if (key) return { buttons, question: { topic: key, ...QUESTIONS[key] } };
   // 用途まで分かっていて区が分からないときは、提出先の消防署を決めるために区を聞く
   if (WARD_STATIONS.length && !station && (filings.length || rules?.install.length))

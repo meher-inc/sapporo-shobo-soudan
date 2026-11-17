@@ -86,7 +86,7 @@ function kyoto(scene: Scene, f: FilingFacts): FilingVerdict[] | null {
     case "event":
       return [v({ procedure: "saimono", title: "催物開催届", target, result: "required", deadline: "実施する日の5日前まで", basis: `${K_JO} 第57条第3号、${K_KI} 第13条`, reason: "防火対象物を一時的に劇場等・ディスコ等・展示場の用途に使う催物" })];
     case "renovation":
-      return [v({ procedure: "koji", title: "工事に関する届出", target, result: "conditional", basis: `${K_JO} 第55条第3項・第56条`, reason: "京都市の条例には工事計画そのものの届出はない。用途や使用形態が変わる場合は使用の変更届（7日前）、火を使う設備を設ける場合は設置届（5日前）が要る", caveats: ["建築確認が必要な工事は消防同意の対象", "消防用設備等の工事は消防法の着工届（10日前）・設置届（4日以内）"] })];
+      return [v({ procedure: "koji", title: "工事に関する届出", target, result: "conditional", basis: `${K_JO} 第55条第3項・第56条`, reason: "京都市の条例には工事計画そのものの届出はない。用途や使用形態が変わる場合は使用の変更届（7日前）が要る。火を使う設備を設けるときの設置届（5日前）は設備の種類と規模で決まる（厨房設備は、延べ1,000㎡以上の特定用途の建物、同一厨房室の入力合計350kW以上、又は排気ダクトが立ち下がるものが対象）", caveats: ["建築確認が必要な工事は消防同意の対象", "消防用設備等の工事は消防法の着工届（10日前）・設置届（4日以内）"] })];
     case "bonfire":
       return [v({ procedure: "kaen", title: "火災と紛らわしい煙等を発するおそれのある行為の届出", target, result: "required", deadline: "実施する日の前日まで", basis: `${K_JO} 第57条第1号、${K_KI} 第13条`, reason: "火災と紛らわしい煙又は火炎を発するおそれのある行為", caveats: ["口頭で届け出ることもできる（規則第13条ただし書）"] })];
     case "water_outage":
