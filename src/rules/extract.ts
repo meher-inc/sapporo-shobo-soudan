@@ -36,7 +36,11 @@ const OCCUPANCY_WORDS: [RegExp, string][] = [
 // 用途の変更（「物販店として使っていた店舗を飲食店に変えて」）。1つ目のグループは変更後の用途の部分
 const USE_CHANGE = /(?:使って|使用して|営業して)いた[^。]{0,20}?を([^。]{1,20}?)(?:に|へ)(?:変えて|変え(?:ます|る)|変更(?:して|します|する)|転用)/;
 // 厨房設備の設置（「業務用ガスコンロを3台新しく設置」）。調理に使うだけの文（「ガスコンロを使って調理」）は含めない
-const KITCHEN_INSTALL = /厨房設備|厨房機器|フライヤー|業務用[^。]{0,4}コンロ|コンロ[^。]{0,12}(?:設置|新設|増設|入れ替)/;
+const KITCHEN_INSTALL = /厨房設備|厨房機器|フライヤー|業務用[^。]{0,4}コンロ|コンロ[^。]{0,12}(?:設置|新設|増設|入れ替|増や|追加|取り?付け)/;
+// 種類を言わないガスの設備（「ガスの設備について届出は必要？」）。飲食の相談なら厨房設備として読む
+const GAS_EQUIPMENT = /ガスの?(?:設備|器具|機器)/;
+const ASKS_FILING = /届出|届け出|届けで|手続/;
+const FOOD_CONTEXT = /飲食|焼肉|焼き肉|居酒屋|レストラン|カフェ|ラーメン|食堂|厨房|調理/;
 // 管理について権原を有する者が複数（統括防火管理者。消防法 第八条の二）
 export const MULTI_TITLE = /管理者が(?:別|異な|違)|管理権原(?:者)?が(?:分かれ|複数|別)|テナントごとに(?:管理|経営|オーナー)|オーナーが(?:別|異な)|統括防火管理/;
 
@@ -104,7 +108,7 @@ export function extractFacts(text: string): FilingFacts {
   if (/上方(に|へ)?排気/.test(t)) f.exhaust_down = false;
   if (/(コンロ|フライヤー|ガス|火を使|調理|厨房|かまど|グリル)/.test(t)) f.fire_use = true;
   if (/火を使わない|IHのみ|電気調理のみ/.test(t)) f.fire_use = false;
-  if (KITCHEN_INSTALL.test(t)) f.facility = "kitchen";
+  if (KITCHEN_INSTALL.test(t) || (GAS_EQUIPMENT.test(t) && FOOD_CONTEXT.test(t))) f.facility = "kitchen";
   else if (/サウナ設備|サウナを設置|サウナを置|テントサウナ/.test(t)) f.facility = "sauna";
   else if (/蓄電池/.test(t)) f.facility = "battery";
   else if (/ボイラー/.test(t)) f.facility = "boiler";
@@ -145,7 +149,7 @@ export function detectScenes(text: string): Scene[] {
   if (/使用開始|開業|開店|開設|開所|開園|オープン|入居|使い始め|営業を始め|テナントに入/.test(t) || USE_CHANGE.test(t)) s.push("use_start");
   if (/模様替|改装|内装工事|改修|リフォーム|用途変更|間取り|増築/.test(t)) s.push("renovation");
   if (/ポップアップ|一時的|期間限定|短期間/.test(t) && !/展示場|観覧場/.test(t)) s.push("temp_use");
-  if (KITCHEN_INSTALL.test(t) || /サウナ設備|サウナを設置|サウナを置|蓄電池|ボイラー|発電機|発電設備|火気使用設備|火を使う設備/.test(t)) s.push("fire_equipment");
+  if (KITCHEN_INSTALL.test(t) || GAS_EQUIPMENT.test(t) || /サウナ設備|サウナを設置|サウナを置|蓄電池|ボイラー|発電機|発電設備|火気使用設備|火を使う設備/.test(t)) s.push("fire_equipment");
   if (/少量危険物|指定可燃物|危険物を?(貯蔵|保管|置|ため)|危険物を取り?扱/.test(t) || hazmatRatio(t) !== undefined) s.push("small_hazmat");
   if (/露店|屋台|出店/.test(t)) s.push("stall");
   if (/催し|催物|イベント|展示会|コンサート/.test(t) && !s.includes("stall")) s.push("event");
@@ -266,7 +270,11 @@ function judgeAll(jurisdiction: Jurisdiction, facts: FilingFacts, scenes: Scene[
       ]
     : [];
   const filings = [...scenes.flatMap((s) => judgeFilings(jurisdiction, s, facts)), ...nationalFilings(scenes, facts, install, latest, asked), ...topicFilings(jurisdiction, latest, facts)];
-  return { facts, scenes, install, filings, asked: facts.occupancy ? asked : [], notes: notesFor(facts, userTexts) };
+  const notes = notesFor(facts, userTexts);
+  // 届出を聞かれたのに場面を判定できなかったとき、モデルが要否を創作しないようにする（2026-11-17 の初見10問の問5）
+  if (!filings.length && ASKS_FILING.test(latest.normalize("NFKC")))
+    notes.push("相談者は届出を聞いているが、相談文からはどの届出の場面かを判定できなかった。届出の要否を「必要」「不要」と言い切らず、設備の種類や規模などの条件で決まることを伝え、足りない情報を1つだけ質問する");
+  return { facts, scenes, install, filings, asked: facts.occupancy ? asked : [], notes };
 }
 
 // 結論を左右する前提を、モデルが言い換えたり別の値で書いたりしないように明記する
@@ -283,6 +291,23 @@ function notesFor(f: FilingFacts, userTexts: string[]): string[] {
     notes.push("用途を変えて特定用途（飲食店・物品販売店舗など）として使う場合、消防用設備等は変更後の用途の基準がすべて適用され、前の用途のときの基準のままにする特例は使えない（消防法 第十七条の三第二項第四号）。使用開始（変更）の届出も要る");
   if (f.capacity_label) notes.push(`収容人員は ${f.capacity_label} として判定した（従業者の数＋固定いす席の数。消防法施行規則 第一条の三）`);
   return notes;
+}
+
+/**
+ * 選択肢で聞く項目の候補（判定に足りない項目）。相談者が聞いた設備の不足を先に、無ければ届出の不足、どちらも無ければ全体の不足を返す。
+ * 聞かれた内容に関係なく延べ面積を聞いていた（2026-11-17 の初見10問）ため、聞かれた項目の判定に要るものから聞く。
+ * 聞かれた設備の不足は判定の条文の順（消火器なら火を使うかが先）。届出・全体の不足は、これまでどおり用途→延べ面積→収容人員→階数→火を使うかの順。
+ * 用途が不明なら用途を最初に聞く。返した項目に選択肢で答えられるものが無ければ、画面の選択肢は出さず、モデルが文で1つ聞く
+ */
+const QUESTION_ORDER = ["occupancy", "total_area", "capacity", "floors_above", "fire_use"]; // src/worker/actions.ts の ORDER と同じ順
+export function missingForQuestion(r: RulesResult | null): string[] {
+  const head = r?.facts.occupancy ? [] : ["occupancy"];
+  if (!r) return head;
+  const asked = r.install.filter((v) => r.asked.includes(v.equipment)).flatMap((v) => v.missing);
+  if (asked.length) return [...new Set([...head, ...asked])];
+  const rest = (r.filings.some((v) => v.missing.length) ? r.filings : [...r.install, ...r.filings]).flatMap((v) => v.missing);
+  const rank = (k: string) => (QUESTION_ORDER.includes(k) ? QUESTION_ORDER.indexOf(k) : QUESTION_ORDER.length);
+  return [...new Set([...head, ...[...new Set(rest)].sort((a, b) => rank(a) - rank(b))])];
 }
 
 export function rulesNote(r: RulesResult): string {
