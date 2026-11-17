@@ -63,3 +63,13 @@ export function stripEchoes(text: string, a: AnswerActions = { buttons: [] }): s
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
 }
+
+// 作成ツールのボタンが出る回答で、締めくくり（所轄の消防署で確認する一文）が抜けていたら補う。
+// 回答が出そろってから stripEchoes のあとに使う（2026-11-17 の初見10問で、問7・問8の締めくくりが抜けた）
+const CLOSING = /消防(?:署|本部|局)[^。\n]{0,15}(?:確認|相談)/;
+export const CLOSING_TEXT = "下のボタンからトドケデで書類を作り、出す前に所轄の消防署で確認してください。";
+export function withClosing(text: string, a: AnswerActions = { buttons: [] }): string {
+  const hasLink = a.buttons.some((b) => "kind" in b && b.kind === "link");
+  if (!hasLink || !text.trim() || CLOSING.test(text)) return text;
+  return `${text.trimEnd()}\n\n${CLOSING_TEXT}`;
+}
