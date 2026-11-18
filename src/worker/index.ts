@@ -11,6 +11,7 @@ import { withSharedSecrets } from "./secrets";
 import { isTestVisit, markTestUser, rememberVisit } from "./traffic";
 import { eventApi, eventTestApi, recordPageView } from "./events";
 import { guide, publishedScenarios } from "./guide";
+import { localTest } from "./test-mode.ts";
 
 const app = new Hono<AppEnv>();
 
@@ -44,6 +45,10 @@ app.use("/api/*", async (c, next) => {
   }
   await next();
 });
+
+// テスト用の入口（ローカルの E2E 専用）は、E2E_MODE=1 かつ localhost / 127.0.0.1 のときだけ開く。本番では各処理より先に 404 を返す（各処理でも確認する）
+app.use("/api/test/*", async (c, next) => (localTest(c.env, c.req.url) ? next() : c.notFound()));
+app.use("/auth/test-login", async (c, next) => (localTest(c.env, c.req.url) ? next() : c.notFound()));
 
 app.route("/auth", auth);
 app.get("/api/me", (c) => c.json(publicMe(c.get("user"), c.env)));

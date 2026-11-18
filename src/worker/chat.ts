@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv, Env } from "./env";
+import { localTest } from "./test-mode.ts";
 import { createAnonymousUser } from "./session";
 import { takeUserQuota } from "./caps";
 import { SYSTEM_PROMPT } from "../config/prompt";
@@ -58,8 +59,8 @@ function stalledStream(): ReadableStream<Uint8Array> {
  * Extension point: a service that needs retrieval (RAG) or extra per-turn rules builds `system` here.
  * See CLAUDE.md "拡張" for how the Tokyo fire consultation service adds law citations.
  */
-async function runModel(env: Env, messages: Msg[], question: string, realAi: boolean, rules?: string, lane?: Lane, actions?: Actions) {
-  if (env.E2E_MODE === "1" && question === "__stall__") return stalledStream();
+async function runModel(env: Env, messages: Msg[], question: string, localE2E: boolean, realAi: boolean, rules?: string, lane?: Lane, actions?: Actions) {
+  if (localE2E && question === "__stall__") return stalledStream();
   if (env.AI_MOCK === "1" && !realAi) return mockStream(question);
   // 設置義務・届出の要否は条文どおりのルールで判定し（src/rules）、結論を固定してからモデルに説明させる
   // 引き継ぎの扱い（laneRules）は最後に置き、回答の書き方より優先させる
@@ -145,9 +146,10 @@ chat.post("/", async (c) => {
   const convId = conversationId;
   let source: ReadableStream<Uint8Array>;
   // Local E2E only: tests that check answer quality opt in to the real model.
-  const realAi = c.env.E2E_MODE === "1" && c.req.header("x-test-real-ai") === "1";
+  const localE2E = localTest(c.env, c.req.url);
+  const realAi = localE2E && c.req.header("x-test-real-ai") === "1";
   try {
-    source = await runModel(c.env, messages, message, realAi, rules, detected?.lane, actions);
+    source = await runModel(c.env, messages, message, localE2E, realAi, rules, detected?.lane, actions);
   } catch (first) {
     // Workers AI occasionally drops the upstream connection; one retry covers most of these.
     // 4006 is the daily quota, where retrying cannot help.
@@ -157,7 +159,7 @@ chat.post("/", async (c) => {
       return c.json({ error: "ai_unavailable", conversationId: convId }, 503);
     }
     try {
-      source = await runModel(c.env, messages, message, realAi, rules, detected?.lane, actions);
+      source = await runModel(c.env, messages, message, localE2E, realAi, rules, detected?.lane, actions);
     } catch (err) {
       console.error("ai_error", err);
       recordError(c, "ai_error", user.email);
