@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv, Env, User } from "./env";
+import { localTest } from "./test-mode.ts";
 import { SERVICE } from "../config/service";
 import { isTestVisit, visitSource } from "./traffic";
 
@@ -57,7 +58,7 @@ export async function loadUser(c: Context<AppEnv>): Promise<User | null> {
 
 function clientIp(c: Context<AppEnv>): string {
   // Local E2E only: lets each test act as a distinct client.
-  if (c.env.E2E_MODE === "1" && c.req.header("x-test-ip")) return c.req.header("x-test-ip")!;
+  if (localTest(c.env, c.req.url) && c.req.header("x-test-ip")) return c.req.header("x-test-ip")!;
   return c.req.header("cf-connecting-ip") ?? "unknown";
 }
 
