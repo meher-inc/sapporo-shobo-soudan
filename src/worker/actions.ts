@@ -14,7 +14,8 @@ export type GyoseiReceiver = "要確認" | "あり" | "なし";
 export type ReplyChip = { label: string; text: string };
 /** question.topic は計測（condition_answered）の prop に使う質問の名前 */
 /** ask は、選択肢で聞けない足りない項目（入力の合計など）。選択肢を出さず、モデルに本文で1つ聞かせる */
-export type Actions = { buttons: ActionButton[]; ask?: string; question?: { topic: string; text: string; options: ReplyChip[] } };
+/** searching は、回答の前に Web 検索で公式ページを確かめる設定のとき true。画面の待ち表示に使う（判定には関係しない） */
+export type Actions = { buttons: ActionButton[]; ask?: string; searching?: boolean; question?: { topic: string; text: string; options: ReplyChip[] } };
 
 const UTM = "utm_source=todokede_ai&utm_medium=answer_button";
 export const DOCS_URL = `https://docs.todokede.jp/?${UTM}`;
@@ -127,7 +128,7 @@ export function buildActions(input: {
   if (station) buttons.push({ kind: "tel", label: `${station.name}に電話する`, href: `tel:${station.tel.replace(/[^\d]/g, "")}`, sub: station.tel });
 
   // 次に聞くことは1つだけ。聞かれた項目の判定に足りない項目のうち、選択肢で答えられるものを優先順に選ぶ（src/rules/extract.ts）
-  const missing = missingForQuestion(rules);
+  const missing = missingForQuestion(rules, userTexts);
   const answered = userTexts.join("\n");
   const key = lane === "setsubi" ? undefined : missing.find((k): k is (typeof ORDER)[number] => (ORDER as readonly string[]).includes(k) && !(TOPIC[k] && answered.includes(`${TOPIC[k]}はわかりません`)));
   // 選択肢で聞けない設備の値（入力の合計など）が判定に足りないときは、選択肢を出さずに本文で1つ聞かせる（src/rules/extract.ts の textQuestion）（「わからない」と答えた後は聞かない）

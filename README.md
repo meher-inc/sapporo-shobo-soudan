@@ -40,7 +40,8 @@ Cloudflare Worker (Hono)
 | 実行基盤 | Cloudflare Workers + Static Assets | 画面と API を1つの Worker で配信するので、デプロイが1回で済み CORS も要らない。HTML を返すときにログイン状態を埋め込むため、最初の表示で追加の通信が発生しない |
 | API | Hono | Workers 向けに作られた軽いルーター。Cookie・ルーティング・型つきの Bindings を標準で扱え、依存が小さい |
 | DB | D1 | Workers から同じネットワーク内で読める。利用者・セッション・相談履歴のような小さな関係データに向く。外部キーの CASCADE で履歴の削除が単純になる |
-| AI | Workers AI `gemma-4-26b-a4b-it`（思考モード無効） | Cloudflare の中で完結し、鍵の管理が要らない。東京の消防相談で実測（2026-10-19）し、最初の文字まで0.6〜0.7秒、全体約6秒で、比較した llama-4-scout（全体8〜12秒）より速く、指示した書式を守った |
+| 回答のモデル | Claude Haiku 5.5（`@anthropic-ai/sdk` 直結、考える深さ「中」、Web検索つき） | 初めて受ける質問30問の比較（2026-11-19）で、Workers AI の正解4問に対し20〜21問。差は、判定の規則が扱っていない論点を Web検索（法令・消防局の公式ページに限定、1問あたり最大3回）で確かめられるかどうかで生まれた。1回答あたり約0.016ドル（検索料込み）、最初の文字まで平均13〜14秒。`ANTHROPIC_API_KEY`（`wrangler secret put ANTHROPIC_API_KEY`）が無いときと、Claude が何も返せなかったときは、下の Workers AI で答える（`src/worker/claude.ts`）。依存 `@anthropic-ai/sdk` はこのために足した |
+| 予備のモデル | Workers AI `gemma-4-26b-a4b-it`（思考モード無効） | Cloudflare の中で完結し、鍵の管理が要らない。東京の消防相談で実測（2026-10-19）し、最初の文字まで0.6〜0.7秒、全体約6秒で、比較した llama-4-scout（全体8〜12秒）より速く、指示した書式を守った |
 | AI の止まり対策 | 開始失敗は1回再試行、25秒無応答で打ち切り | Workers AI の上流切断やストリームの停止で、画面が「停止」のまま固まるのを防ぐ |
 | 画面 | Preact + Vite | React 互換の API で約15KB（gzip）。モバイル回線でも最初の表示が速い。Vite はビルドが速く、ハッシュつきのファイルを出力する |
 | 見た目 | 自作 CSS（Liquid Glass） | `backdrop-filter`、多層の内側の影、ポインタ追従の光でガラスを表現。UI ライブラリを入れず CSS は約4KB（gzip） |

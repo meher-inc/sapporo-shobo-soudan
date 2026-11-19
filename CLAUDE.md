@@ -20,7 +20,7 @@ MeHer株式会社が新しい Web サービスを作るときの土台。東京�
 ### 変えてはいけないこと（基盤）
 
 - 実行基盤は Cloudflare（Workers・Static Assets・D1・Workers AI・Rate Limiting）。別のクラウドや外部 DB を足す前に依頼者に確認する。
-- AI は Workers AI を使う。モデルは `wrangler.jsonc` の `AI_MODEL`。変えるときは最初の文字までの時間と全体の時間を実測し、README の「技術選定の理由」を更新する。
+- 回答は Claude で作る（`@anthropic-ai/sdk` 直結。モデルは `wrangler.jsonc` の `ANSWER_MODEL`、キーは wrangler secret の `ANTHROPIC_API_KEY`）。キーが無いときと Claude が何も返せなかったときは Workers AI（`AI_MODEL`）で答える（2026-11-19 承認）。モデルを変えるときは、初めて受ける質問での正解数・最初の文字までの時間・全体の時間・費用を実測し、README の「技術選定の理由」を更新する。
 - 依存を足すときは、その理由を README の表に1行で書く。UI ライブラリ・CSS フレームワーク・アニメーションライブラリは入れない（CSS と View Transitions API で足りている）。
 - `/auth/test-login` と `/api/test/*` は `E2E_MODE=1` かつ localhost のときだけ動く。本番の設定に `E2E_MODE` と `AI_MOCK` を入れない。
 

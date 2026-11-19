@@ -15,6 +15,7 @@
     "deploy": "vite build && node scripts/ensure-d1.mjs && wrangler d1 migrations apply DB --remote && wrangler deploy"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.10.0",
     "hono": "4.13.13",
     "preact": "10.29.8"
   },

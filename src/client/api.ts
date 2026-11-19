@@ -22,6 +22,8 @@ export interface EscalationRef {
 
 /** 回答の下に出すボタン（作成ツール・電話）と、押すだけで答えられる選択肢。サーバーが決める（src/worker/actions.ts） */
 export interface AnswerActions {
+  /** 回答の前に Web 検索で公式ページを確かめる設定のとき true（待ち表示に使う） */
+  searching?: boolean;
   /** kind=request は「行政書士に依頼する」（押すと依頼カードを開く。href は使わない） */
   buttons: { kind: "link" | "tel" | "request"; label: string; href: string; sub?: string }[];
   /** topic は計測（condition_answered）に使う質問の名前 */

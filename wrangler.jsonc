@@ -48,6 +48,8 @@
   "vars": {
     // Workers AI のモデル。選定理由は README の「技術選定の理由」
     "AI_MODEL": "@cf/google/gemma-4-26b-a4b-it",
+    // 回答に使う Claude のモデル。ANTHROPIC_API_KEY（wrangler secret）があるときだけ Claude で答え、無いときと障害時は AI_MODEL で答える
+    "ANSWER_MODEL": "claude-haiku-5-5",
     // 差し替え: 独自ドメインを接続したら https://<host> にする
     "CANONICAL_ORIGIN": "https://sapporo.todokede.jp",
     "STRIPE_API_BASE": "https://api.stripe.com",

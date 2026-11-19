@@ -4,6 +4,10 @@ export interface Env {
   ASSETS: Fetcher;
   CHAT_LIMITER: RateLimit;
   AI_MODEL: string;
+  /** 回答に使う Claude のモデル（claude-haiku-5-5 など）。ANTHROPIC_API_KEY とそろったときだけ Claude で答え、無ければ AI_MODEL（Workers AI）で答える */
+  ANSWER_MODEL?: string;
+  /** Anthropic API のキー（wrangler secret）。設定ファイルには書かない */
+  ANTHROPIC_API_KEY?: string;
   /** "1" で設置義務・届出の要否をルールで判定し、結果を回答の前提として渡す（src/rules） */
   RULES_ENABLED?: string;
   /** e.g. https://example.todokede.jp. Pages use it for canonical URLs; workers.dev redirects to it. */

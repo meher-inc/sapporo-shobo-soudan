@@ -36,6 +36,8 @@ export type FilingFacts = Partial<Facts> & {
   generator?: boolean; // 発電機・発電設備を設ける
   multi_title?: boolean; // 管理について権原を有する者が複数
   public_area?: number; // 客席など公衆の出入りする部分の床面積（㎡）
+  tenant?: boolean; // ビルの一室・テナントなど、建物の一部についての相談
+  ranges?: { capacity?: { lo: number; hi: number; text: string }; total_area?: { lo: number; hi: number; text: string } }; // 幅で書かれた値（「100人以上」「約300㎡」、テナントの人数・面積）
 };
 
 export type FilingVerdict = {
