@@ -34,7 +34,8 @@ pnpm run test:unit
 pnpm run test:e2e        # Chromium と WebKit（Pixel 7・iPhone 15・デスクトップ）
 ```
 
-- Playwright のブラウザを取得できない環境では `CHROMIUM_PATH=<chromium の実行ファイル> pnpm run test:e2e` で Chromium だけを動かし、WebKit は GitHub Actions の結果で確認する。どちらで確認したかを報告に書く。
+- Playwright のブラウザを取得できない環境では `CHROMIUM_PATH=<chromium の実行ファイル> pnpm run test:e2e` で Chromium だけを動かし、WebKit は PR に「e2e」ラベルを付けて GitHub Actions で確認する。どちらで確認したかを報告に書く。
+- GitHub の PR では型チェックと単体テストしか動かない（Actions の費用を無料枠に収めるため。2026-11-19）。E2E は PR の前に手元で通し、結果を PR の説明に書く。GitHub で E2E を動かすのは、PR に「e2e」ラベルを付けたときと手動の実行（workflow_dispatch）のときだけ
 - 画面を変えたら `pnpm screenshots` で `docs/screenshots/` を更新し、変わった画像を見て確認する。
 - 新しい機能には E2E を足す。消したテストがあれば理由を報告に書く。
 

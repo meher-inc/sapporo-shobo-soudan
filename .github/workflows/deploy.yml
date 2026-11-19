@@ -9,6 +9,12 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled：PR に「e2e」ラベルを付けたときに E2E を動かすため
+    types: [opened, synchronize, reopened, labeled]
+    # 文書だけの変更ではテストを動かさない（2026-11-19。Actions の無料枠を超えて止まったため）
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   workflow_dispatch:
 
 concurrency:
@@ -18,8 +24,19 @@ concurrency:
 permissions:
   contents: read
 
+# Actions の費用を無料枠（月2,000分）に収めるため、E2E は次のときだけ GitHub で動かす（2026-11-19 丸岡「極限までコスト削減」）。
+# - 手動の実行（workflow_dispatch）
+# - PR に「e2e」ラベルが付いているとき
+# - main への push で、Actions からデプロイする設定（DEPLOY_ENABLED）のとき
+# それ以外の PR では型チェックと単体テストだけを動かす。E2E（Chromium と WebKit）は PR の前に手元で通す（CLAUDE.md の「確認」）
+env:
+  RUN_E2E: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'e2e') || (github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true') }}
+
 jobs:
   test:
+    # main への push では動かさない（2026-11-19）。main へは PR 経由でしか入らず、PR で同じテストを済ませている。
+    # 本番は Cloudflare Workers Builds がデプロイし、下の deploy は DEPLOY_ENABLED が "true" のときだけ。そのときは push でもテストする
+    if: (github.event_name != 'push' || vars.DEPLOY_ENABLED == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # The repository token is scoped for the usage report (D1 read). Pass it to the E2E only when the
@@ -38,11 +55,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
       - run: pnpm run test:unit
-      - run: pnpm exec playwright install --with-deps chromium
+      - if: env.RUN_E2E == 'true'
+        run: pnpm exec playwright install --with-deps chromium
       # WebKit（iPhone 15）は下の test-webkit で macOS の上で回す
-      - run: pnpm run test:e2e --reporter=list,github --project=mobile-chrome --project=desktop-chrome
+      - if: env.RUN_E2E == 'true'
+        run: pnpm run test:e2e --reporter=list,github --project=mobile-chrome --project=desktop-chrome
       - uses: actions/upload-artifact@v7
-        if: failure()
+        if: failure() && env.RUN_E2E == 'true'
         with:
           name: playwright-report
           path: |
@@ -54,6 +73,8 @@ jobs:
   # 1フレームに1〜2秒、層の作り直しに十数秒〜数分かかって時間切れになった（plan 20261112-webkit-e2e-stability）。
   # macOS の WebKit は Safari と同じ Core Animation で描画し、同じ操作が数秒で終わる
   test-webkit:
+    # iPhone 15（WebKit）は macOS で動き、10倍で数えられる。RUN_E2E と同じ条件のときだけ動かす（上の env の説明）
+    if: (github.event.action != 'labeled' || github.event.label.name == 'e2e') && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'e2e') || (github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'))
     runs-on: macos-latest
     timeout-minutes: 30
     env:
