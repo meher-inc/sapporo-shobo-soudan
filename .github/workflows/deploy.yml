@@ -9,6 +9,10 @@ on:
   push:
     branches: [main]
   pull_request:
+    # 文書だけの変更ではテストを動かさない（2026-11-19。Actions の無料枠を超えて止まったため）
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   workflow_dispatch:
 
 concurrency:
@@ -20,6 +24,9 @@ permissions:
 
 jobs:
   test:
+    # main への push では動かさない（2026-11-19）。main へは PR 経由でしか入らず、PR で同じテストを済ませている。
+    # 本番は Cloudflare Workers Builds がデプロイし、下の deploy は DEPLOY_ENABLED が "true" のときだけ。そのときは push でもテストする
+    if: github.event_name != 'push' || vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # The repository token is scoped for the usage report (D1 read). Pass it to the E2E only when the
@@ -54,6 +61,9 @@ jobs:
   # 1フレームに1〜2秒、層の作り直しに十数秒〜数分かかって時間切れになった（plan 20261112-webkit-e2e-stability）。
   # macOS の WebKit は Safari と同じ Core Animation で描画し、同じ操作が数秒で終わる
   test-webkit:
+    # main への push では動かさない（2026-11-19）。main へは PR 経由でしか入らず、PR で同じテストを済ませている。
+    # 本番は Cloudflare Workers Builds がデプロイし、下の deploy は DEPLOY_ENABLED が "true" のときだけ。そのときは push でもテストする
+    if: github.event_name != 'push' || vars.DEPLOY_ENABLED == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     env:
