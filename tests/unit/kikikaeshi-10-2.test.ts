@@ -31,8 +31,10 @@ test("B: 「防火対象物の点検報告」は防火対象物点検として�
 });
 
 test("C: 特定一階段でも、防火管理者を定める規模（収容人員30人以上）でなければ防火対象物点検の対象外", () => {
-  assert.equal(fireInspection("雑居ビルの3階でバーを開業します。直通階段は1つで、収容人員は20人です。防火対象物の点検報告は必要ですか。")?.result, "not_required");
+  assert.equal(fireInspection("雑居ビルの3階でバーを開業します。直通階段は1つで、ビル全体の収容人員は20人です。防火対象物の点検報告は必要ですか。")?.result, "not_required");
   assert.equal(fireInspection("雑居ビルの3階でバーを開業します。直通階段は1つで、収容人員は40人です。防火対象物の点検報告は必要ですか。")?.result, "required");
+  // ビルの一部の相談で「収容人員は20人」とだけ書かれたときは、建物全体の人数とは限らないので「不要」と言い切らない（2026-11-19）
+  assert.equal(fireInspection("雑居ビルの3階でバーを開業します。直通階段は1つで、収容人員は20人です。防火対象物の点検報告は必要ですか。")?.result, "conditional");
   const unknown = fireInspection("雑居ビルの3階でバーを開業します。直通階段は1つです。防火対象物の点検報告は必要ですか。");
   assert.equal(unknown?.result, "conditional");
   assert.ok(unknown?.missing.includes("capacity"));

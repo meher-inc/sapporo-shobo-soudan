@@ -10,6 +10,7 @@ import { detectEscalation, laneRules, type Lane } from "./escalation";
 import { actionsNote, buildActions, type Actions } from "./actions";
 import { recordError, recordLimit } from "./events";
 import { withRequestEscalations } from "./escalations";
+import { claudeStream, SEARCH_NOTE } from "./claude.ts";
 
 export const chat = new Hono<AppEnv>();
 
@@ -65,16 +66,23 @@ async function runModel(env: Env, messages: Msg[], question: string, localE2E: b
   // 設置義務・届出の要否は条文どおりのルールで判定し（src/rules）、結論を固定してからモデルに説明させる
   // 引き継ぎの扱い（laneRules）は最後に置き、回答の書き方より優先させる
   // 画面に出るボタンの説明は判定メモの後、引き継ぎの扱いの前に置く
-  const system = [SYSTEM_PROMPT, rules, actions ? actionsNote(actions) : "", lane ? laneRules(lane) : ""].filter(Boolean).join("\n\n");
-  return (await env.AI.run(env.AI_MODEL as keyof AiModels, {
-    messages: [{ role: "system", content: system }, ...messages],
-    stream: true,
-    max_tokens: 1200,
-    temperature: 0.3,
-    // Gemma / Qwen think before answering unless told not to; thinking adds seconds before the first token.
-    ...(/gemma|qwen/.test(env.AI_MODEL) ? { chat_template_kwargs: { enable_thinking: false } } : {}),
-  } as never)) as unknown as ReadableStream<Uint8Array>;
+  const systemFor = (search: boolean) => [SYSTEM_PROMPT, rules, actions ? actionsNote(actions) : "", search ? SEARCH_NOTE : "", lane ? laneRules(lane) : ""].filter(Boolean).join("\n\n");
+  const workersAi = async () =>
+    (await env.AI.run(env.AI_MODEL as keyof AiModels, {
+      messages: [{ role: "system", content: systemFor(false) }, ...messages],
+      stream: true,
+      max_tokens: 1200,
+      temperature: 0.3,
+      // Gemma / Qwen think before answering unless told not to; thinking adds seconds before the first token.
+      ...(/gemma|qwen/.test(env.AI_MODEL) ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+    } as never)) as unknown as ReadableStream<Uint8Array>;
+  // Claude で答える（判定メモに無い論点は Web 検索で公式ページを確かめる）。何も返せなかったときは Workers AI の回答に切り替える
+  if (usesClaude(env)) return claudeStream({ apiKey: env.ANTHROPIC_API_KEY!, model: env.ANSWER_MODEL!, system: systemFor(true), messages, fallback: workersAi });
+  return workersAi();
 }
+
+/** Claude で答える設定か（モデル名とキーの両方があるとき）。キーが無い環境は、これまでどおり Workers AI で答える */
+export const usesClaude = (env: Env) => Boolean(env.ANTHROPIC_API_KEY && env.ANSWER_MODEL?.startsWith("claude-"));
 
 chat.post("/", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { conversationId?: string; message?: string } | null;
@@ -143,6 +151,8 @@ chat.post("/", async (c) => {
   // 回答の下に出すボタンと選択肢。モデルにも伝え、本文にURLや別の質問を重ねて書かせない
   const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content);
   const actions = buildActions({ userTexts, rules: rulesResult, lane: detected?.lane, emergency: EMERGENCY.test(message) });
+  // Claude で答えるときは検索で最初の文字までが長くなる。画面の待ち表示に「確認しています」を出す
+  if (usesClaude(c.env) && c.env.AI_MOCK !== "1") actions.searching = true;
   const convId = conversationId;
   let source: ReadableStream<Uint8Array>;
   // Local E2E only: tests that check answer quality opt in to the real model.

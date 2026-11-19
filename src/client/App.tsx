@@ -424,11 +424,15 @@ export function App({ initialMe }: { initialMe: Me }) {
                         {streaming && m.id === lastBot?.id && <span class="caret" />}
                       </>
                     ) : (
-                      <span class="typing" aria-label="回答を作成中">
-                        <span />
-                        <span />
-                        <span />
-                      </span>
+                      <>
+                        <span class="typing" aria-label="回答を作成中">
+                          <span />
+                          <span />
+                          <span />
+                        </span>
+                        {/* 検索で確かめるあいだは文字が出ない。数秒たったら何をしているかを出す */}
+                        {m.actions?.searching && <span class="typing-note" data-testid="typing-note">法令と公式ページを確認しています</span>}
+                      </>
                     )}
                   </div>
                   {!(streaming && m.id === lastBot?.id) && m.content && m.escalation && (
