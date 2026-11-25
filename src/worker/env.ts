@@ -6,6 +6,10 @@ export interface Env {
   AI_MODEL: string;
   /** 回答に使う Claude のモデル（claude-haiku-5-5 など）。ANTHROPIC_API_KEY とそろったときだけ Claude で答え、無ければ AI_MODEL（Workers AI）で答える */
   ANSWER_MODEL?: string;
+  /** 考える深さ（low / medium / high）。省くと medium。src/worker/claude.ts */
+  ANSWER_EFFORT?: string;
+  /** 1回答あたりの Web 検索の上限回数。省くと 3 */
+  ANSWER_SEARCHES?: string;
   /** Anthropic API のキー（wrangler secret）。設定ファイルには書かない */
   ANTHROPIC_API_KEY?: string;
   /** "1" で設置義務・届出の要否をルールで判定し、結果を回答の前提として渡す（src/rules） */

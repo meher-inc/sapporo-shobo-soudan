@@ -45,7 +45,9 @@ test("C: 特定一階段でも、防火管理者を定める規模（収容人�
 
 test("D・E: 条件次第の項目は決め手を添えて書かせ、「任せる」という言い方をさせない", () => {
   const r = runRules("nagoya-city", ["名古屋市で雑貨店の内装を改装します。消防の手続きは必要ですか。"])!;
-  assert.match(rulesNote(r), /項目ごとに何で決まるか/);
+  // 条件次第の項目は、足りない情報（決め手）を添えて載せる。聞かれていない項目は書かせない（2026-11-25 の本番テスト）
+  assert.match(rulesNote(r), /足りない情報: /);
+  assert.match(rulesNote(r), /聞かれていない設備・届出は書かないでください/);
   assert.doesNotMatch(rulesNote(r), /まとめて一文で触れ/);
   assert.match(actionsNote({ buttons: [] }), /「任せる」「お任せ」という言い方はしない/);
 });

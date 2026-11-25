@@ -83,17 +83,23 @@ const TENANT = /テナント|(?:ビル|建物)の(?:[1一]|\d+階の)?(?:室|区
 const WHOLE_BUILDING = /一戸建て|戸建|[1一]棟|自社ビル|平屋/;
 const WHOLE = /(?:ビル|建物)全体|全体の|全体で|延べ|延床/;
 
+// 「飲食店などのテナントは入っていません」: 入っていないと書いた用途・テナントは、用途やテナントの読み取りに使わない
+const NOT_PRESENT = /[^。、,()（）]*?(?:など|等)?(?:の)?(?:テナント|店舗|お店|店)?(?:は|が|も)?(?:入って|入居して)(?:いません|いない|おりません|ない)/g;
+
 export function extractFacts(text: string): FilingFacts {
-  const t = text.normalize("NFKC");
+  const t = text.normalize("NFKC").replace(NOT_PRESENT, "");
   const f: FilingFacts = {};
   // 「物販店として使っていた店舗を飲食店に変えて」: 変更後の用途で判定する（前の用途の語で複合用途にしない）
   const change = t.match(USE_CHANGE);
-  const useText = change ? change[1] : t;
+  // 「会社の資材置き場の倉庫」「営業所の倉庫」: 持ち主や場所を表す「〜の」は用途として数えない（倉庫だけで判定する）
+  const useText = (change ? change[1] : t).replace(/(?:会社|営業所|事務所|オフィス)の(?=[^。、]{0,10}(?:倉庫|工場|作業場|資材置き場|車庫))/g, "");
   if (change) f.use_change = true;
   const explicit = t.match(/(?<!第\s*)[（(]?(\d{1,2}(?:の[23])?)[)）]?項\s*([イロハニ])?(?:\s*[（(](\d)[)）])?/);
   if (explicit) f.occupancy = `${explicit[1]}${explicit[2] ?? ""}${explicit[3] ? `(${explicit[3]})` : ""}`;
   else {
-    const hits = OCCUPANCY_WORDS.filter(([re]) => re.test(useText)).map(([, o]) => o);
+    let hits = OCCUPANCY_WORDS.filter(([re]) => re.test(useText)).map(([, o]) => o);
+    // 「運送会社です。…倉庫に」: 「会社」だけでは事務所と読まない（ほかの用途が書いてあれば、そちらで判定する）
+    if (hits.includes("15") && hits.some((o) => o !== "15") && !/事務所|オフィス|営業所/.test(useText)) hits = hits.filter((o) => o !== "15");
     const uniq = [...new Set(hits)];
     if (uniq.length === 1) f.occupancy = uniq[0];
     else if (uniq.length > 1) f.occupancy = "16イ"; // 用途が複数 → 複合用途として判定し「条件次第」に倒す
@@ -293,6 +299,22 @@ const line = (label: string, r: Verdict | FilingVerdict, extra = "") =>
 
 export type RulesResult = { facts: FilingFacts; scenes: Scene[]; install: Verdict[]; filings: FilingVerdict[]; asked: Equipment[]; notes: string[]; hearing?: boolean };
 
+/**
+ * 相談者が届出の名前を挙げて聞いたとき（「使用開始の届出は、いつまでに」）は、その届出だけを残す。
+ * 同じ場面のほかの届出（防火管理者の選任届など）を並べると、聞かれていない届出の要否や、足りない情報（人数）の質問が回答に混ざる
+ * （2026-11-25 の本番テスト24問）。名前を挙げていない相談（「開業します。届出は必要ですか」）は、これまでどおりすべて残す
+ */
+function namedFilings(filings: FilingVerdict[], question: string): FilingVerdict[] {
+  const q = question.replace(/[のをにへ、,\s]/g, "");
+  const core = (title: string) => title.replace(/[（(][^）)]*[）)]/g, "").replace(/(?:届出書|届出|届|申請|報告)$/, "").replace(/[のを・、\s]/g, "");
+  const named = filings.filter((x) => {
+    const c = core(x.title);
+    for (let i = 0; i + 4 <= c.length; i++) if (q.includes(c.slice(i, i + 4))) return true;
+    return false;
+  });
+  return named.length ? named : filings;
+}
+
 /** 会話中の利用者の発言（古い順）から判定する。後の発言の値を優先する */
 export function runRules(jurisdiction: Jurisdiction, userTexts: string[]): RulesResult | null {
   const facts: FilingFacts = {};
@@ -366,9 +388,10 @@ function judgeAll(jurisdiction: Jurisdiction, facts: FilingFacts, scenes: Scene[
   const latestN = latest.normalize("NFKC");
   // 量を書かない危険物の保管（「灯油を保管したい」）は、量で決まるので「必要」と言い切らない
   const amountUnknown = scenes.includes("small_hazmat") && facts.hazmat_ratio === undefined && !EXPLICIT_HAZMAT.test(userTexts.join("\n").normalize("NFKC"));
-  const filings = [...scenes.flatMap((s) => judgeFilings(jurisdiction, s, facts)), ...nationalFilings(scenes, facts, install, latest, asked), ...topicFilings(jurisdiction, latest, facts)].map((x) =>
+  const allFilings = [...scenes.flatMap((s) => judgeFilings(jurisdiction, s, facts)), ...nationalFilings(scenes, facts, install, latest, asked), ...topicFilings(jurisdiction, latest, facts)].map((x) =>
     amountUnknown && x.procedure === "shoryo-kikenbutsu" && x.result !== "not_required" ? { ...x, result: "conditional" as const, reason: hazmatUnknownReason(userTexts.join("\n"), facts.residence), missing: ["hazmat_amount"] } : x,
   );
+  const filings = namedFilings(allFilings, latestN);
   const notes = notesFor(facts, userTexts);
   // 届出を聞かれたのに場面を判定できなかったとき、モデルが要否を創作しないようにする（2026-11-17 の初見10問の問5）
   if (!filings.length && ASKS_FILING.test(latestN))
@@ -443,7 +466,7 @@ export function rulesNote(r: RulesResult): string {
   const out = ["# ルールによる判定結果（この回答の結論はこれに従う）"];
   out.push("相談文から読み取った条件を条文にあてはめて、機械的に判定した目安です。結論の区分（必要／不要／条件次第）と期限・提出先・様式はこのとおりに書き、逆の結論や別の区分にしないでください。それぞれの結論に根拠の条文を添えてください。");
   out.push("「条件次第」の項目は断定せず、足りない情報は1つだけ質問してください（画面に選択肢が出るときはそれに合わせる）。面積や人数は、相談者が書いた言い方（「150㎡未満」など）のまま書き、読み取った数値に言い換えないでください。読み取った条件が相談内容と違う場合は、そのことを伝えて確認してください。");
-  out.push("答え方: 相談者が聞いた設備・届出の結論と根拠を最初に書きます。結論は「〜にあたるため、◯◯が必要になる目安です」「〜にあたらないため、◯◯は不要となる目安です」の形で書き、「必ず必要です」「確実に不要です」のような言い切りの語は使わないでください。条文の条件（「地階・無窓階」は地階又は無窓階）を言い換えないでください。聞かれていない項目は「必要」のものを一文ずつ、「条件次第」のものは、項目ごとに何で決まるか（足りない情報）を取り違えずに添えて短く触れ、「不要」の項目は省きます。「条件次第」の項目は、冒頭や結論の文で「必要になる目安です」と言い切らず、「〜なら必要になる目安です」のように条件を先に書いてください。条件が2つ以上あるとき（火を使う設備があれば面積に関係なく、なければ延べ面積150㎡以上、など）は、すべての条件を書いてください。回答の最後に「最終的な要否は、所轄の消防署でご確認ください」という趣旨の文を1文入れてください（締めくくりの1文に含めてもかまいません）。このメモの見出しや箇条書きをそのまま写さず、相談者に向けた文章にしてください。");
+  out.push("答え方: 相談者が聞いた設備・届出の結論と根拠を最初に書きます。結論は「〜にあたるため、◯◯が必要になる目安です」「〜にあたらないため、◯◯は不要となる目安です」の形で書き、「必ず必要です」「確実に不要です」のような言い切りの語は使わないでください。条文の条件（「地階・無窓階」は地階又は無窓階）を言い換えないでください。聞かれていない設備・届出は書かないでください（このメモに載っている項目だけを書きます）。「条件次第」の項目は、冒頭や結論の文で「必要になる目安です」と言い切らず、「〜なら必要になる目安です」のように条件を先に書いてください。条件が2つ以上あるとき（火を使う設備があれば面積に関係なく、なければ延べ面積150㎡以上、など）は、すべての条件を書いてください。回答の最後に「最終的な要否は、所轄の消防署でご確認ください」という趣旨の文を1文入れてください（締めくくりの1文に含めてもかまいません）。このメモの見出しや箇条書きをそのまま写さず、相談者に向けた文章にしてください。");
   const f = r.facts;
   const cond = [
     f.occupancy && `用途 令別表第一${f.occupancy.replace(/^(\d{1,2}(?:の[23])?)(.*)$/, "($1)項$2")}`,
@@ -468,13 +491,13 @@ export function rulesNote(r: RulesResult): string {
     const fmt = (x: Verdict) => line(EQUIPMENT_LABEL[x.equipment], x, x.detail ? `（${x.detail}）` : x.scope ? `（${x.scope}）` : "");
     const asked = r.install.filter((x) => r.asked.includes(x.equipment));
     const others = r.install.filter((x) => !r.asked.includes(x.equipment));
-    if (asked.length) {
-      out.push("## 相談者が聞いている設備（この結論を最初に書く）");
-      for (const x of asked) out.push(fmt(x));
-      if (others.length) out.push("## そのほかの設備・防火管理者（必要なものを短く添える）");
-    } else out.push("## 消防用設備等・防火管理者（消防法施行令と条例）");
-    for (const x of others) out.push(fmt(x));
-    out.push("総務省令の除外・令第32条の特例はこの判定に含まれていません（条例の上乗せは、判定に入っている管轄だけ根拠欄に条例を示しています）。最終的な判断は所轄の消防署が行う旨は、締めくくりの一文（トドケデで作り、出す前に消防署で確認）に含めれば足ります。");
+    // 聞かれていない設備の判定は書かせない。個別の質問に、相談内容から外れた（読み取りの誤りが混じりやすい）設備の結論を添えると、
+    // 正しい結論の回答に誤った記述が加わる（2026-11-25 の本番テスト24問）。何が必要かを広く聞く相談と、質問のない相談だけ全体を載せる
+    const shown = asked.length ? asked : r.hearing ? others : [];
+    if (asked.length) out.push("## 相談者が聞いている設備（この結論を最初に書く）");
+    else if (shown.length) out.push("## 消防用設備等・防火管理者（消防法施行令と条例。必要なものを短く添える）");
+    for (const x of shown) out.push(fmt(x));
+    if (shown.length) out.push("総務省令の除外・令第32条の特例はこの判定に含まれていません（条例の上乗せは、判定に入っている管轄だけ根拠欄に条例を示しています）。最終的な判断は所轄の消防署が行う旨は、締めくくりの一文（トドケデで作り、出す前に消防署で確認）に含めれば足ります。");
   }
   let text = out.join("\n");
   // 幅のある値は、読み取った1つの数値（「100人未満」の99人）ではなく相談者の言い方で書かせる
