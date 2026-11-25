@@ -49,7 +49,10 @@
     // Workers AI のモデル。選定理由は README の「技術選定の理由」
     "AI_MODEL": "@cf/google/gemma-4-26b-a4b-it",
     // 回答に使う Claude のモデル。ANTHROPIC_API_KEY（wrangler secret）があるときだけ Claude で答え、無いときと障害時は AI_MODEL で答える
-    "ANSWER_MODEL": "claude-haiku-5-5",
+    "ANSWER_MODEL": "claude-sonnet-5-5",
+    // 考える深さと、1回答あたりの Web 検索の上限回数（開発用54問の測定で、Sonnet・high・8回が最も正確だった。2026-11-25）
+    "ANSWER_EFFORT": "high",
+    "ANSWER_SEARCHES": "8",
     // 差し替え: 独自ドメインを接続したら https://<host> にする
     "CANONICAL_ORIGIN": "https://sapporo.todokede.jp",
     "STRIPE_API_BASE": "https://api.stripe.com",

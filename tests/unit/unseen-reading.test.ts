@@ -134,3 +134,49 @@ test("区画の相談: どちらの用途でも結論が同じ項目と、建物
   // 飲食店の区画は、もともと特定用途の基準で判定する
   assert.equal(equip(runRules("general", ["テナントビルの1階で飲食店をしています。ビル全体の収容人員は40人です。防火管理者は必要ですか。"]), "fire_manager")?.result, "required");
 });
+
+// ---- 聞かれていない設備 ----
+test("判定メモ: 個別の届出の相談には、聞かれていない設備の判定を載せない", () => {
+  // 危険物の届出だけを聞いた相談に、防火管理者・自動火災報知設備などの結論を添えない（読み取りの誤りが回答の誤りになる）
+  const note = rulesNote(runRules("tokyo-tfd", ["運送会社の倉庫に軽油を300リットル保管します。消防署への届出は必要ですか。"])!);
+  assert.match(note, /## 届出/);
+  assert.doesNotMatch(note, /^- (防火管理者|自動火災報知設備|誘導灯・誘導標識|消火器具): /m);
+  // 聞かれた設備だけを載せる
+  const asked = rulesNote(runRules("general", ["延べ面積200㎡の飲食店です。消火器は必要ですか。"])!);
+  assert.match(asked, /## 相談者が聞いている設備/);
+  assert.match(asked, /^- 消火器具: /m);
+  assert.doesNotMatch(asked, /^- (自動火災報知設備|誘導灯・誘導標識|防火管理者): /m);
+});
+test("判定メモ: 何が必要かを広く聞く相談には、これまでどおり設備全体を載せる", () => {
+  const note = rulesNote(runRules("general", ["延べ面積200㎡の飲食店を開きます。消防で必要な設備を教えてください。"])!);
+  assert.match(note, /## 消防用設備等・防火管理者/);
+  assert.match(note, /^- 消火器具: /m);
+  assert.match(note, /^- 誘導灯・誘導標識: /m);
+});
+
+// ---- 入っていないと書いた用途 ----
+test("否定: 「飲食店などのテナントは入っていません」の用途を、建物の用途やテナントとして読まない", () => {
+  const f = extractFacts("自社の事務所ビル（収容人員80人、飲食店などのテナントは入っていません）で防火管理者をしています。");
+  assert.equal(f.occupancy, "15");
+  assert.equal(f.tenant, undefined);
+  // 入っていると書いた場合は、これまでどおり複合用途として読む
+  assert.equal(extractFacts("事務所ビルで、1階に飲食店が入っています。").occupancy, "16イ");
+});
+
+// ---- 持ち主・場所を表す「〜の」 ----
+test("用途: 「会社の倉庫」「営業所の倉庫」は倉庫として読み、複合用途にしない", () => {
+  assert.equal(extractFacts("会社の資材置き場の倉庫で軽油を保管します。").occupancy, "14");
+  assert.equal(extractFacts("運送会社です。営業所の倉庫に軽油を置きます。").occupancy, "14");
+  // 飲食店と事務所が入る建物は、これまでどおり複合用途
+  assert.equal(extractFacts("1階が飲食店、2階が事務所の建物です。").occupancy, "16イ");
+});
+
+// ---- 名前を挙げて聞いた届出 ----
+test("届出: 名前を挙げて聞いた届出だけを判定メモに残し、ほかの届出の質問を出さない", () => {
+  const q = "札幌市で、テナントビルの1階の空き区画を借りて雑貨店を始めます。従業員は2人です。防火対象物の使用開始の届出は、いつまでに、どこへ出せばよいですか。";
+  const r = runRules("sapporo-city", [q])!;
+  assert.deepEqual(r.filings.map((x) => x.title), ["防火対象物使用開始届"]);
+  assert.deepEqual(missingForQuestion(r, [q]), []);
+  // 名前を挙げない相談は、これまでどおり場面の届出をすべて残す
+  assert.ok(runRules("sapporo-city", ["札幌市で雑貨店を開業します。消防署への届出は必要ですか。"])!.filings.length > 1);
+});

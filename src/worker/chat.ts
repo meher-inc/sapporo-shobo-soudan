@@ -77,7 +77,7 @@ async function runModel(env: Env, messages: Msg[], question: string, localE2E: b
       ...(/gemma|qwen/.test(env.AI_MODEL) ? { chat_template_kwargs: { enable_thinking: false } } : {}),
     } as never)) as unknown as ReadableStream<Uint8Array>;
   // Claude で答える（判定メモに無い論点は Web 検索で公式ページを確かめる）。何も返せなかったときは Workers AI の回答に切り替える
-  if (usesClaude(env)) return claudeStream({ apiKey: env.ANTHROPIC_API_KEY!, model: env.ANSWER_MODEL!, system: systemFor(true), messages, fallback: workersAi });
+  if (usesClaude(env)) return claudeStream({ apiKey: env.ANTHROPIC_API_KEY!, model: env.ANSWER_MODEL!, effort: env.ANSWER_EFFORT, maxSearches: Number(env.ANSWER_SEARCHES) || undefined, system: systemFor(true), messages, fallback: workersAi });
   return workersAi();
 }
 
